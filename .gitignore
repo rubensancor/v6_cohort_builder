@@ -1,0 +1,2 @@
+# Exclude directories whose names start with a dot, at any depth.
+**/.*/

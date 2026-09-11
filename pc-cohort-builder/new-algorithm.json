@@ -1,0 +1,117 @@
+{
+  "name": "pc-cohort-builder",
+  "image": "ghcr.io/rubensancor/pc-cohort-builder",
+  "vantage6_version": "5.0",
+  "code_url": "https://mygitrepo.org",
+  "documentation_url": "",
+  "partitioning": "horizontal",
+  "functions": [
+    {
+      "name": "central_function",
+      "display_name": "Central function",
+      "standalone": true,
+      "description": "Generate a cohort at all federated OMOP nodes and return counts.",
+      "step_type": "central_compute",
+      "ui_visualizations": [],
+      "arguments": [
+        {
+          "name": "client",
+          "display_name": "Client",
+          "description": "",
+          "type": null,
+          "has_default_value": false,
+          "is_frontend_only": false
+        },
+        {
+          "name": "cohort_name",
+          "display_name": "Cohort name",
+          "description": "",
+          "type": null,
+          "has_default_value": false,
+          "is_frontend_only": false
+        },
+        {
+          "name": "sql",
+          "display_name": "Sql",
+          "description": "",
+          "type": null,
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
+        },
+        {
+          "name": "atlas_json",
+          "display_name": "Atlas json",
+          "description": "",
+          "type": null,
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
+        },
+        {
+          "name": "cohort_id",
+          "display_name": "Cohort id",
+          "description": "",
+          "type": null,
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
+        },
+        {
+          "name": "overwrite",
+          "display_name": "Overwrite",
+          "description": "",
+          "type": null,
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": false
+        }
+      ],
+      "databases": []
+    },
+    {
+      "name": "generate_cohort_count",
+      "display_name": "Generate cohort count",
+      "standalone": true,
+      "description": "Generate a cohort at this node and return its exact subject count.",
+      "step_type": "federated_compute",
+      "ui_visualizations": [],
+      "arguments": [
+        {
+          "name": "sql",
+          "display_name": "Sql",
+          "description": "",
+          "type": null,
+          "has_default_value": false,
+          "is_frontend_only": false
+        },
+        {
+          "name": "cohort_name",
+          "display_name": "Cohort name",
+          "description": "",
+          "type": null,
+          "has_default_value": false,
+          "is_frontend_only": false
+        },
+        {
+          "name": "cohort_id",
+          "display_name": "Cohort id",
+          "description": "",
+          "type": null,
+          "has_default_value": false,
+          "is_frontend_only": false
+        },
+        {
+          "name": "overwrite",
+          "display_name": "Overwrite",
+          "description": "",
+          "type": null,
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": false
+        }
+      ],
+      "databases": []
+    }
+  ]
+}

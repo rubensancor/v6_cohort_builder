@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A code-grounded visual guide to the vantage6 cohort builder algorithm and its tests.">
+  <title>vantage6 Cohort Builder — Algorithm and Test Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="cohort-builder-explained.css">
+  <script src="cohort-builder-explained.js" defer></script>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch color theme" title="Switch color theme">
+    <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"></path></svg>
+  </button>
+
+  <div class="page-shell">
+    <nav class="toc" id="toc" aria-label="Page sections">
+      <div class="toc-title">Guide map</div>
+      <a class="active" href="#overview">01 Overview</a>
+      <a href="#runtime">02 Runtime flow</a>
+      <a href="#scripts">03 Python scripts</a>
+      <a href="#testing">04 Test strategy</a>
+      <a href="#smoke">05 Real smoke test</a>
+      <a href="#contracts">06 Contracts</a>
+      <a href="#commands">07 Run it</a>
+    </nav>
+
+    <main class="main">
+      <header class="hero reveal" style="--i: 0">
+        <div class="eyebrow"><span class="eyebrow-mark"></span> pc-cohort-builder · vantage6 5.0 algorithm · v6 tooling</div>
+        <h1>From cohort definition<br>to federated patient counts.</h1>
+        <p class="hero-lead">
+          The algorithm accepts either OHDSI CohortGenerator SQL or an ATLAS cohort expression,
+          sends one cohort job to every organization, builds the cohort inside each node's OMOP
+          database, and returns exact subject counts to the central task.
+        </p>
+        <div class="hero-note">
+          <span class="status-dot status-dot--gold"></span>
+          The production cohort path is <code>central.py → federated.py → cohort.py</code>.
+          <code>extract.py</code> and <code>preprocess.py</code> are still template examples and are not used by this flow.
+        </div>
+      </header>
+
+      <section id="overview" class="section-block reveal" style="--i: 1">
+        <div class="section-heading">
+          <span class="section-number">01</span>
+          <div><p class="section-kicker">Mental model</p><h2>What the algorithm is doing</h2></div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card metric-card--blue">
+            <div class="metric-value">3</div>
+            <div class="metric-label">production modules</div>
+            <p><code>central</code>, <code>federated</code>, and shared <code>cohort</code> logic.</p>
+          </article>
+          <article class="metric-card metric-card--green">
+            <div class="metric-value">37</div>
+            <div class="metric-label">pytest cases collected</div>
+            <p>Fast validation, orchestration, adapter, and harness-contract coverage.</p>
+          </article>
+          <article class="metric-card metric-card--gold">
+            <div class="metric-value">2</div>
+            <div class="metric-label">verification layers</div>
+            <p>Mocked/unit tests plus a real local PostgreSQL + OHDSI smoke path.</p>
+          </article>
+          <article class="metric-card metric-card--rust">
+            <div class="metric-value">3</div>
+            <div class="metric-label">smoke-test subjects</div>
+            <p>Three of five seeded people were born in or after 1970.</p>
+          </article>
+        </div>
+
+        <div class="architecture ve-card ve-card--hero">
+          <div class="architecture-label">ONE CENTRAL REQUEST · MANY NODE EXECUTIONS</div>
+          <div class="architecture-grid">
+            <article class="arch-item arch-item--input">
+              <span class="arch-step">INPUT</span>
+              <h3>SQL <em>or</em> ATLAS JSON</h3>
+              <p>Exactly one definition, a name, optional ID, and overwrite flag.</p>
+            </article>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <article class="arch-item arch-item--central">
+              <span class="arch-step">CENTRAL</span>
+              <h3><code>central_function</code></h3>
+              <p>Validates, converts ATLAS JSON if needed, discovers organizations, creates a subtask.</p>
+            </article>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="node-stack" aria-label="Federated nodes">
+              <article class="arch-item arch-item--node"><span>ORG 1</span><strong>OMOP node</strong><small>generate + count</small></article>
+              <article class="arch-item arch-item--node"><span>ORG 2</span><strong>OMOP node</strong><small>generate + count</small></article>
+              <article class="arch-item arch-item--node"><span>ORG N</span><strong>OMOP node</strong><small>generate + count</small></article>
+            </div>
+            <div class="arch-arrow arch-arrow--return" aria-hidden="true">→</div>
+            <article class="arch-item arch-item--result">
+              <span class="arch-step">RESULT</span>
+              <h3>Per-node counts</h3>
+              <p>A total is emitted only when every expected organization succeeds.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtime" class="section-block reveal" style="--i: 2">
+        <div class="section-heading">
+          <span class="section-number">02</span>
+          <div><p class="section-kicker">Execution sequence</p><h2>The runtime flow, step by step</h2></div>
+        </div>
+        <p class="section-intro">Select a step to see its exact responsibility and data boundary.</p>
+
+        <div class="runtime-layout">
+          <ol class="runtime-rail" aria-label="Algorithm execution stages">
+            <li><button class="runtime-step active" type="button" data-stage="1"><span>01</span><strong>Validate request</strong><small><code>validate_cohort_request()</code></small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="2"><span>02</span><strong>Prepare SQL</strong><small><code>atlas_json_to_sql()</code> when needed</small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="3"><span>03</span><strong>Dispatch subtask</strong><small>one method, all organization IDs</small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="4"><span>04</span><strong>Read node config</strong><small><code>DATABASE_*</code> and <code>DB_PARAM_*</code></small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="5"><span>05</span><strong>Generate cohort</strong><small>OHDSI Python wrappers → R packages → OMOP</small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="6"><span>06</span><strong>Return node payload</strong><small>success or serialized error</small></button></li>
+            <li><button class="runtime-step" type="button" data-stage="7"><span>07</span><strong>Aggregate safely</strong><small>counts, errors, and conditional total</small></button></li>
+          </ol>
+
+          <aside class="stage-detail ve-card ve-card--recessed" aria-live="polite">
+            <div class="stage-detail-top"><span id="stage-number">STEP 01</span><span id="stage-file">cohort.py</span></div>
+            <h3 id="stage-title">Reject ambiguous or invalid cohort definitions</h3>
+            <p id="stage-description">The request must contain a non-empty name and exactly one of SQL or ATLAS JSON. The cohort ID must be positive; if absent, the helper creates one. The overwrite value must be a real boolean.</p>
+            <dl class="boundary-list">
+              <div><dt>Receives</dt><dd id="stage-in">name, SQL/JSON, ID, overwrite</dd></div>
+              <div><dt>Produces</dt><dd id="stage-out">an immutable <code>CohortRequest</code></dd></div>
+              <div><dt>Failure</dt><dd id="stage-error"><code>CohortInputError</code> before any federated work starts</dd></div>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section id="scripts" class="section-block reveal" style="--i: 3">
+        <div class="section-heading">
+          <span class="section-number">03</span>
+          <div><p class="section-kicker">File map</p><h2>How the Python scripts fit together</h2></div>
+        </div>
+
+        <div class="filter-bar" role="group" aria-label="Filter Python files">
+          <button type="button" class="filter-button active" data-filter="all">All files</button>
+          <button type="button" class="filter-button" data-filter="production">Production path</button>
+          <button type="button" class="filter-button" data-filter="test">Test runners</button>
+          <button type="button" class="filter-button" data-filter="template">Template examples</button>
+        </div>
+
+        <div class="module-grid" id="module-grid">
+          <article class="module-card module-card--entry" data-category="production">
+            <div class="module-head"><span class="file-name">__init__.py</span><span class="tag tag--entry">exports</span></div>
+            <h3>Wrapper-visible package surface</h3>
+            <p>Imports and exposes <code>central_function</code> and <code>generate_cohort_count</code> so the vantage6 algorithm wrapper can resolve both method names from the package root.</p>
+            <div class="module-contract"><strong>Calls:</strong> none · <strong>Used by:</strong> algorithm wrapper and import tests</div>
+          </article>
+
+          <article class="module-card module-card--central" data-category="production">
+            <div class="module-head"><span class="file-name">central.py</span><span class="tag tag--central">orchestrator</span></div>
+            <h3>Coordinates the federated job</h3>
+            <ul class="clean-list">
+              <li>Validates the input through <code>cohort.py</code>.</li>
+              <li>Converts ATLAS JSON into CohortGenerator SQL.</li>
+              <li>Lists organizations and creates <code>generate_cohort_count</code> subtasks.</li>
+              <li>Waits for results and aggregates them.</li>
+            </ul>
+            <div class="module-contract"><strong>Boundary:</strong> owns orchestration, never opens an OMOP connection.</div>
+          </article>
+
+          <article class="module-card module-card--node" data-category="production">
+            <div class="module-head"><span class="file-name">federated.py</span><span class="tag tag--node">node action</span></div>
+            <h3>Adapts node execution into a stable payload</h3>
+            <p>Reads the OMOP environment, calls <code>execute_cohort_generation()</code>, adds organization/node identity, and converts every exception into a structured <code>status: error</code> response.</p>
+            <div class="module-contract"><strong>Boundary:</strong> the error containment layer around database execution.</div>
+          </article>
+
+          <article class="module-card module-card--core module-card--wide" data-category="production">
+            <div class="module-head"><span class="file-name">cohort.py</span><span class="tag tag--core">domain + OHDSI core</span></div>
+            <h3>Contains the reusable rules and the real cohort operation</h3>
+            <div class="function-columns">
+              <div><strong>Input and conversion</strong><code>validate_cohort_request</code><code>normalize_atlas_json</code><code>atlas_json_to_sql</code></div>
+              <div><strong>Node execution</strong><code>parse_omop_config</code><code>execute_cohort_generation</code><code>extract_subject_count</code></div>
+              <div><strong>Central result</strong><code>aggregate_central_results</code><code>generate_cohort_id</code></div>
+            </div>
+            <p class="module-foot">The real write path creates cohort tables, checks existing rows, optionally deletes them, passes a one-row definition set through the Python-to-R bridge, generates the cohort, obtains counts, and always disconnects.</p>
+          </article>
+
+          <article class="module-card module-card--test" data-category="test">
+            <div class="module-head"><span class="file-name">local-omop/smoke_federated.py</span><span class="tag tag--test">real smoke</span></div>
+            <h3>Exercises one real federated node locally</h3>
+            <p>Sets safe defaults, loads the sample SQL, calls <code>_run_generate_cohort_count()</code> with overwrite enabled, prints JSON, and exits non-zero on node failure or count mismatch.</p>
+            <div class="module-contract"><strong>It bypasses:</strong> <code>central.py</code> and a live vantage6 network.</div>
+          </article>
+
+          <article class="module-card module-card--test" data-category="test">
+            <div class="module-head"><span class="file-name">test/test_compute.py</span><span class="tag tag--test">MockNetwork script</span></div>
+            <h3>Demonstrates task creation in a mock network</h3>
+            <p>Creates three mock organizations and submits central/federated methods. It is an executable demonstration, not a collected pytest case, and its dataframe datasets do not replace the OMOP configuration required by the real node path.</p>
+          </article>
+
+          <article class="module-card module-card--template" data-category="template">
+            <div class="module-head"><span class="file-name">extract.py</span><span class="tag tag--template">template</span></div>
+            <h3>Generic data-extraction example</h3>
+            <p>Reads a URI into pandas and returns a dataframe. It still contains TODO/template code and is not called by the cohort-building workflow.</p>
+          </article>
+
+          <article class="module-card module-card--template" data-category="template">
+            <div class="module-head"><span class="file-name">preprocess.py</span><span class="tag tag--template">template</span></div>
+            <h3>Generic dataframe preprocessing example</h3>
+            <p>Adds a BMI column to an input dataframe. It is paired with its own MockNetwork demo but is independent of the OMOP cohort generation path.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="testing" class="section-block reveal" style="--i: 4">
+        <div class="section-heading">
+          <span class="section-number">04</span>
+          <div><p class="section-kicker">Verification model</p><h2>What each test layer proves</h2></div>
+        </div>
+
+        <div class="test-tabs" role="tablist" aria-label="Test layers">
+          <button id="tab-unit" class="test-tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-unit" data-test-tab="unit">37 pytest cases</button>
+          <button id="tab-smoke" class="test-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-smoke" data-test-tab="smoke">Real OMOP smoke</button>
+          <button id="tab-mock" class="test-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-mock" data-test-tab="mock">MockNetwork demos</button>
+        </div>
+
+        <div class="test-panel active" id="panel-unit" role="tabpanel" aria-labelledby="tab-unit" data-test-panel="unit">
+          <div class="test-summary"><span class="status status--fast">FAST · MOSTLY ISOLATED</span><p>These tests use fakes, monkeypatching, and file inspection. They are designed to catch logic regressions without requiring a running PostgreSQL container.</p></div>
+          <div class="table-wrap"><div class="table-scroll"><table class="data-table">
+            <thead><tr><th>File</th><th>Focus</th><th>What is replaced</th><th>What it proves</th></tr></thead>
+            <tbody>
+              <tr><td><code>test_central.py</code></td><td>Exports, dispatch, ATLAS branch, partial errors</td><td>Algorithm client and ATLAS conversion</td><td>Correct subtask method/arguments and aggregation call path</td></tr>
+              <tr><td><code>test_cohort_helpers.py</code></td><td>Validation, config, counts, aggregation, OHDSI call order</td><td>OHDSI modules and database connection</td><td>Core rules, aliases such as <code>cohortSubjects</code>, cleanup, and payload semantics</td></tr>
+              <tr><td><code>test_federated.py</code></td><td>Success/error payloads and decorator delegation</td><td>Config parsing and cohort execution</td><td>Node exceptions do not escape as unstructured failures</td></tr>
+              <tr><td><code>test_local_omop_harness.py</code></td><td>Compose, schema, seed, SQL, smoke defaults</td><td>No runtime; reads files as text</td><td>The harness contract is present and internally consistent</td></tr>
+            </tbody>
+          </table></div></div>
+          <div class="truth-line"><strong>Does not prove:</strong> that R loads, OHDSI R packages work, PostgreSQL is reachable, or CohortGenerator produces the expected rows.</div>
+        </div>
+
+        <div class="test-panel" id="panel-smoke" role="tabpanel" aria-labelledby="tab-smoke" data-test-panel="smoke" hidden>
+          <div class="test-summary"><span class="status status--real">REAL DEPENDENCIES</span><p>The smoke script crosses Python, <code>rpy2</code>, the OHDSI R stack, JDBC, PostgreSQL, and the results schema. This is the strongest local proof of the federated node path.</p></div>
+          <div class="proof-chain">
+            <div><span>1</span><strong>postgres:16</strong><small>creates cdm + results</small></div><i>→</i>
+            <div><span>2</span><strong>seed SQL</strong><small>5 people + observation periods</small></div><i>→</i>
+            <div><span>3</span><strong>federated runner</strong><small>environment → OHDSI execution</small></div><i>→</i>
+            <div><span>4</span><strong>results.cohort</strong><small>3 distinct subjects</small></div><i>→</i>
+            <div><span>5</span><strong>JSON + exit code</strong><small>success only if count = 3</small></div>
+          </div>
+          <div class="truth-line"><strong>Does not prove:</strong> multi-organization central dispatch, real server authentication, container-image execution, or production database compatibility beyond this minimal PostgreSQL fixture.</div>
+        </div>
+
+        <div class="test-panel" id="panel-mock" role="tabpanel" aria-labelledby="tab-mock" data-test-panel="mock" hidden>
+          <div class="test-summary"><span class="status status--demo">EXECUTABLE DEMOS</span><p><code>test_compute.py</code>, <code>test_extraction.py</code>, and <code>test_preprocessing.py</code> have <code>main()</code> functions and print results. Pytest does not collect them because they contain no <code>test_*()</code> functions.</p></div>
+          <div class="comparison-grid">
+            <article><h3>Useful for</h3><ul class="clean-list"><li>Seeing how <code>MockNetwork</code> is constructed.</li><li>Checking method discovery and task submission.</li><li>Developing the leftover extraction/preprocessing examples.</li></ul></article>
+            <article><h3>Not a replacement for</h3><ul class="clean-list"><li>A real OMOP/JDBC configuration.</li><li>R and OHDSI package verification.</li><li>The Dockerized PostgreSQL smoke run.</li></ul></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="smoke" class="section-block reveal" style="--i: 5">
+        <div class="section-heading">
+          <span class="section-number">05</span>
+          <div><p class="section-kicker">The real local oracle</p><h2>Why the expected count is exactly 3</h2></div>
+        </div>
+
+        <div class="oracle-layout">
+          <div class="people-grid" aria-label="Seeded people and cohort membership">
+            <article class="person-card excluded"><span class="person-id">P1</span><strong>1965</strong><small>excluded</small></article>
+            <article class="person-card included"><span class="person-id">P2</span><strong>1975</strong><small>included</small></article>
+            <article class="person-card included"><span class="person-id">P3</span><strong>1982</strong><small>included</small></article>
+            <article class="person-card included"><span class="person-id">P4</span><strong>2001</strong><small>included</small></article>
+            <article class="person-card excluded"><span class="person-id">P5</span><strong>1940</strong><small>excluded</small></article>
+          </div>
+          <aside class="oracle-card">
+            <div class="oracle-expression">year_of_birth <strong>≥ 1970</strong></div>
+            <div class="oracle-result"><span>expected distinct subjects</span><strong>3</strong></div>
+            <p>The cohort SQL inserts matching people into <code>results.cohort</code> using CohortGenerator placeholders for the CDM schema, target table, and cohort ID.</p>
+          </aside>
+        </div>
+
+        <div class="exit-grid">
+          <article><span class="exit-code exit-code--ok">0</span><div><strong>Pass</strong><p>Node status is success and returned count equals <code>EXPECTED_COUNT</code>.</p></div></article>
+          <article><span class="exit-code exit-code--err">1</span><div><strong>Node failure</strong><p>The federated payload has <code>status: error</code>.</p></div></article>
+          <article><span class="exit-code exit-code--warn">2</span><div><strong>Wrong cohort</strong><p>Execution succeeded, but the subject count differs from the oracle.</p></div></article>
+        </div>
+      </section>
+
+      <section id="contracts" class="section-block reveal" style="--i: 6">
+        <div class="section-heading">
+          <span class="section-number">06</span>
+          <div><p class="section-kicker">Behavioral contracts</p><h2>Success and failure are deliberate</h2></div>
+        </div>
+
+        <div class="contract-grid">
+          <article class="contract-card"><span class="contract-mark">A</span><h3>One input format</h3><p>Both SQL and ATLAS JSON is ambiguous; neither is unusable. The central helper rejects both cases.</p></article>
+          <article class="contract-card"><span class="contract-mark">B</span><h3>Same cohort ID everywhere</h3><p>The central request generates or accepts one positive ID and forwards it to every organization.</p></article>
+          <article class="contract-card"><span class="contract-mark">C</span><h3>No silent overwrite</h3><p>Existing rows cause a node error unless <code>overwrite=True</code>; overwrite deletes matching rows first.</p></article>
+          <article class="contract-card"><span class="contract-mark">D</span><h3>Errors stay attributable</h3><p>The node response includes organization/node identity when configuration was parsed before the failure.</p></article>
+          <article class="contract-card"><span class="contract-mark">E</span><h3>No misleading total</h3><p>If a node errors or returns nothing, successful node counts remain visible but <code>total_count</code> becomes <code>null</code>.</p></article>
+          <article class="contract-card"><span class="contract-mark">F</span><h3>OHDSI count compatibility</h3><p>The parser recognizes several count shapes, including the real <code>cohortId + cohortSubjects</code> output.</p></article>
+        </div>
+
+        <details class="collapsible">
+          <summary>Node environment contract</summary>
+          <div class="collapsible-body env-grid">
+            <code>DATABASE_URI</code><code>DATABASE_TYPE</code><code>DB_PARAM_DBMS</code><code>DB_PARAM_USER</code><code>DB_PARAM_PASSWORD</code><code>DB_PARAM_CDM_DATABASE</code><code>DB_PARAM_CDM_SCHEMA</code><code>DB_PARAM_RESULTS_SCHEMA</code>
+            <p><code>ORGANIZATION_ID</code> and <code>NODE_ID</code> are optional integers used for attribution.</p>
+          </div>
+        </details>
+      </section>
+
+      <section id="commands" class="section-block reveal" style="--i: 7">
+        <div class="section-heading">
+          <span class="section-number">07</span>
+          <div><p class="section-kicker">Reproduce it</p><h2>Commands for this checkout</h2></div>
+        </div>
+
+        <div class="callout callout--info">
+          <strong>Why the R exports?</strong> Importing the vantage6/OHDSI decorators reaches <code>rpy2</code>. This checkout has a workspace-local R environment at <code>../.mamba/envs/ohdsi-r</code>; use these exports unless R is already discoverable system-wide.
+        </div>
+
+        <article class="command-card">
+          <div class="command-head"><div><span>FAST SUITE</span><strong>Collect and run all pytest cases</strong></div><button type="button" class="copy-button" data-copy-target="cmd-pytest">Copy</button></div>
+          <pre id="cmd-pytest"><code>cd pc-cohort-builder
+export R_HOME="$(pwd)/../.mamba/envs/ohdsi-r/lib/R"
+export PATH="$(pwd)/../.mamba/envs/ohdsi-r/bin:$PATH"
+export LD_LIBRARY_PATH="$R_HOME/lib:$(pwd)/../.mamba/envs/ohdsi-r/lib:${LD_LIBRARY_PATH:-}"
+export RPY2_CFFI_MODE=ABI
+uv run pytest -q</code></pre>
+        </article>
+
+        <article class="command-card">
+          <div class="command-head"><div><span>REAL NODE PATH</span><strong>Start PostgreSQL and run the OMOP smoke test</strong></div><button type="button" class="copy-button" data-copy-target="cmd-smoke">Copy</button></div>
+          <pre id="cmd-smoke"><code>docker compose -f local-omop/docker-compose.yml up -d --wait
+uv run python local-omop/smoke_federated.py
+
+# Independent database check
+docker exec pc-cohort-builder-omop psql -U omop -d omop \
+  -c "SELECT cohort_definition_id, COUNT(DISTINCT subject_id) AS subjects FROM results.cohort GROUP BY cohort_definition_id;"
+
+# Remove the test database and its volume
+docker compose -f local-omop/docker-compose.yml down -v</code></pre>
+        </article>
+
+        <div class="done-criteria">
+          <h3>A trustworthy local result has all three signals</h3>
+          <div><span>01</span><p><strong>pytest</strong> reports <code>37 passed</code>.</p></div>
+          <div><span>02</span><p>The smoke JSON reports <code>"status": "success"</code> and <code>"count": 3</code>.</p></div>
+          <div><span>03</span><p>The direct SQL query reports cohort <code>900001</code> with <code>3</code> distinct subjects.</p></div>
+        </div>
+      </section>
+
+      <footer>
+        <p>Grounded in the current repository files under <code>pc-cohort-builder/pc-cohort-builder</code>, <code>test</code>, and <code>local-omop</code>.</p>
+        <p class="footer-meta">Interactive guide · no framework required · open this HTML file directly in a browser</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

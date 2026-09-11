@@ -1,0 +1,76 @@
+{
+  "name": "pc-cohort-builder",
+  "image": "ghcr.io/rubensancor/pc-cohort-builder",
+  "vantage6_version": "5.0",
+  "code_url": "https://mygitrepo.org",
+  "documentation_url": "",
+  "partitioning": "horizontal",
+  "functions": [
+    {
+      "name": "central_function",
+      "description": "Generate an OMOP cohort at all organizations from SQL or ATLAS JSON and aggregate exact patient counts.",
+      "step_type": "central_compute",
+      "databases": [],
+      "arguments": [
+        {
+          "name": "cohort_name",
+          "type": "string",
+          "description": "Human-readable cohort name."
+        },
+        {
+          "name": "sql",
+          "type": "string",
+          "description": "OHDSI CohortGenerator SQL. Provide exactly one of sql or atlas_json."
+        },
+        {
+          "name": "atlas_json",
+          "type": "string",
+          "description": "ATLAS cohort expression JSON. Provide exactly one of sql or atlas_json."
+        },
+        {
+          "name": "cohort_id",
+          "type": "integer",
+          "description": "Positive cohort identifier. If omitted, the central function generates one."
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "description": "Whether federated nodes may replace an existing cohort with the same id."
+        }
+      ]
+    },
+    {
+      "name": "generate_cohort_count",
+      "description": "Generate a cohort on an OMOP node and return the exact subject count.",
+      "step_type": "federated_compute",
+      "databases": [
+        {
+          "name": "omop",
+          "description": "OMOP CDM database configured with DATABASE_TYPE=OMOP and DB_PARAM_* connection values."
+        }
+      ],
+      "arguments": [
+        {
+          "name": "sql",
+          "type": "string",
+          "description": "OHDSI CohortGenerator SQL to execute."
+        },
+        {
+          "name": "cohort_name",
+          "type": "string",
+          "description": "Human-readable cohort name."
+        },
+        {
+          "name": "cohort_id",
+          "type": "integer",
+          "description": "Positive cohort identifier to generate at this node."
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "description": "Whether to replace an existing cohort with the same id."
+        }
+      ]
+    }
+  ]
+}
