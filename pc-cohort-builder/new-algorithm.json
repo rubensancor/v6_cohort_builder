@@ -1,8 +1,8 @@
 {
   "name": "pc-cohort-builder",
-  "image": "ghcr.io/rubensancor/pc-cohort-builder",
+  "image": "ghcr.io/rubensancor/v6_cohort_builder",
   "vantage6_version": "5.0",
-  "code_url": "https://mygitrepo.org",
+  "code_url": "https://github.com/rubensancor/v6_cohort_builder",
   "documentation_url": "",
   "partitioning": "horizontal",
   "functions": [

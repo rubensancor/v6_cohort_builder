@@ -45,7 +45,7 @@ first, especially the part about the
       organizations=organization_ids,
       name="pc-cohort-builder",
       description="SLQ or Atlas JSON based cohort generator",
-      image="ghcr.io/vantage6/algorithm/pc-cohort-builder",
+      image="ghcr.io/rubensancor/v6_cohort_builder",
       input_=input_,
       databases=[{"label": "default"}],
   )

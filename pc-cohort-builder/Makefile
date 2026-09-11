@@ -1,6 +1,6 @@
 VANTAGE6_VERSION ?= 5.0.0
 TAG ?= latest
-IMAGE ?= ghcr.io/vantage6/algorithm/pc-cohort-builder
+IMAGE ?= ghcr.io/rubensancor/v6_cohort_builder
 PLATFORMS ?= linux/amd64
 
 # Major segment of VANTAGE6_VERSION (e.g. 5.0.0 -> 5)

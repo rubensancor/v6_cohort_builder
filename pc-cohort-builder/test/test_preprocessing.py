@@ -43,7 +43,7 @@ def main():
 
     dataframe = client.dataframe.preprocess(
         id_=network.hq.dataframes[0]["id"],
-        image="ghcr.io/vantage6/algorithm/pc-cohort-builder",
+        image="ghcr.io/rubensancor/v6_cohort_builder",
         method="data_preprocessing_function",
         arguments={
             # TODO add sensible values

@@ -3,6 +3,8 @@
 # package dependencies below install vantage6-algorithm-tools itself.
 FROM python:3.13-slim
 
+LABEL org.opencontainers.image.source="https://github.com/rubensancor/v6_cohort_builder"
+
 # This is a placeholder that should be overloaded by invoking
 # docker build with '--build-arg PKG_NAME=...'
 ARG PKG_NAME="pc-cohort-builder"
