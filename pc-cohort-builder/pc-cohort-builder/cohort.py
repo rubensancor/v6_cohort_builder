@@ -136,7 +136,9 @@ def atlas_json_to_sql(atlas_json: str) -> str:
 
 
 def _load_ohdsi_modules() -> tuple[Any, Any, Any]:
-    from ohdsi import common  # pylint: disable=import-outside-toplevel
+    # ``ohdsi.common`` is deliberately not used: importing it loads the R
+    # package FeatureExtraction, which the image does not carry (see rconvert).
+    from . import rconvert as common  # pylint: disable=import-outside-toplevel
     from ohdsi import cohort_generator  # pylint: disable=import-outside-toplevel
     from ohdsi import database_connector  # pylint: disable=import-outside-toplevel
 
@@ -156,7 +158,7 @@ def execute_cohort_generation(
 
     connection_details = database_connector.create_connection_details(
         dbms=config.dbms,
-        connection_string=config.uri,
+        connection_string=normalize_jdbc_uri(config.uri, config.cdm_database),
         user=config.user,
         password=config.password,
     )
@@ -257,6 +259,57 @@ def parse_omop_config(environ: Mapping[str, str] | None = None) -> OmopConfig:
         organization_id=_optional_int(environ, "ORGANIZATION_ID"),
         node_id=_optional_int(environ, "NODE_ID"),
     )
+
+
+def cohort_result_row(
+    *,
+    config: OmopConfig | None,
+    cohort_id: int | None,
+    cohort_name: str,
+    input_type: str | None,
+    status: str,
+    count: int | None = None,
+    message: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """One flat, JSON-friendly row describing a node's cohort outcome.
+
+    The extraction step returns this as a dataframe and the federated step
+    hands it back unchanged, so it has to be flat and serialisable.
+    """
+    return {
+        "organization_id": config.organization_id if config else None,
+        "node_id": config.node_id if config else None,
+        "status": status,
+        "cohort_id": cohort_id,
+        "cohort_name": cohort_name,
+        "input_type": input_type,
+        "database": extra.get("database", config.cdm_database if config else None),
+        "cdm_schema": extra.get("cdm_schema", config.cdm_schema if config else None),
+        "results_schema": extra.get(
+            "results_schema", config.results_schema if config else None
+        ),
+        "count": count,
+        "message": message,
+    }
+
+
+def normalize_jdbc_uri(uri: str, database: str, default_port: int = 5432) -> str:
+    """Complete a JDBC URI that names only the host.
+
+    Node configurations tend to give ``jdbc:postgresql://host``; DatabaseConnector
+    wants ``jdbc:postgresql://host:port/database``. Fill in whatever is missing
+    and leave a complete URI alone.
+    """
+    prefix, sep, rest = uri.partition("://")
+    if not sep:
+        return uri
+    hostpart, slash, path = rest.partition("/")
+    if ":" not in hostpart:
+        hostpart = f"{hostpart}:{default_port}"
+    if not path:
+        path = database
+    return f"{prefix}://{hostpart}/{path}"
 
 
 def _get_existing_cohort_row_count(

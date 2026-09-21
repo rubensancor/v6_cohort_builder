@@ -96,7 +96,29 @@ def central_function(
     cohort_id: int | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate a cohort at all federated OMOP nodes and return counts."""
+    """Pre-v5 entry point; on vantage6 5 the client must orchestrate instead.
+
+    The in-container AlgorithmClient can only create federated tasks, and a
+    federated task gets no database connection, so nothing this function
+    dispatches can reach OMOP. Call ``generate_cohort`` as a data-extraction
+    step and ``cohort_count`` as a federated step from the client instead.
+    """
+    del client, sql, atlas_json, overwrite
+    return {
+        "status": "error",
+        "cohort_id": cohort_id,
+        "cohort_name": cohort_name,
+        "message": (
+            "central_function cannot generate cohorts on vantage6 5: the "
+            "subtasks it creates are federated and receive no database "
+            "access. Run generate_cohort (data extraction) and cohort_count "
+            "(federated) from the client."
+        ),
+    }
+
+
+def _unused_pre_v5_central(client, cohort_name, sql, atlas_json, cohort_id, overwrite):
+    """The original body, kept for reference while the v4 flow is retired."""
     return _run_central_function(
         client=client,
         cohort_name=cohort_name,
