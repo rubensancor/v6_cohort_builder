@@ -17,6 +17,12 @@ extract = importlib.import_module("pc-cohort-builder.extract")
 federated = importlib.import_module("pc-cohort-builder.federated")
 
 
+@pytest.fixture(autouse=True)
+def _allow_sql(monkeypatch):
+    """Most tests here send SQL; nodes accept it only when they opt in."""
+    monkeypatch.setenv("COHORT_BUILDER_ALLOW_SQL", "true")
+
+
 def undecorated(func):
     """The vantage6 decorators validate FUNCTION_ACTION and the node's
     environment; the tests want the function underneath them."""
@@ -252,6 +258,35 @@ def test_generate_cohort_does_not_run_with_an_invalid_minimum(monkeypatch):
     assert row["status"] == "error"
     assert row["count"] is None
     assert ran == []
+
+
+def test_generate_cohort_refuses_sql_unless_the_node_allows_it(monkeypatch):
+    monkeypatch.delenv("COHORT_BUILDER_ALLOW_SQL")
+    ran = []
+    monkeypatch.setattr(
+        extract, "execute_cohort_generation", lambda **_: ran.append(1) or {"count": 7}
+    )
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "error"
+    assert "COHORT_BUILDER_ALLOW_SQL" in row["message"]
+    assert ran == []
+
+
+def test_generate_cohort_accepts_atlas_json_when_sql_is_not_allowed(monkeypatch):
+    monkeypatch.delenv("COHORT_BUILDER_ALLOW_SQL")
+    monkeypatch.setattr(extract, "atlas_json_to_sql", lambda atlas: "SELECT 1")
+    monkeypatch.setattr(extract, "execute_cohort_generation", lambda **_: {"count": 7})
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, atlas_json={"ConceptSets": []}, cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "success"
+    assert row["count"] == 7
 
 
 def test_cohort_count_returns_the_extracted_row_as_plain_json():

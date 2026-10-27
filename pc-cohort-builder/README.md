@@ -72,6 +72,9 @@ row.
    on failure, `message`. It returns nothing else, whatever dataframe it is
    given.
 
+Nodes accept `sql` only when their administrator allows it (see below);
+`atlas_json` is always accepted.
+
 A count from 1 up to the node's minimum (5 by default) never leaves the node:
 the row carries `count: null` and `below_minimum: true` instead, and the
 algorithm log does not print it either. Zero is shared. Node administrators
@@ -80,6 +83,15 @@ choose their own minimum in the node configuration:
 ```yaml
 algorithm_env:
   COHORT_BUILDER_MINIMUM_COUNT: 5
+```
+
+The `sql` input is off by default, because the requester's own SQL can make
+the count reveal any value in the database (see the privacy documentation).
+A node that trusts its requesters can turn it on:
+
+```yaml
+algorithm_env:
+  COHORT_BUILDER_ALLOW_SQL: true
 ```
 
 `central_function`, a central step run on the same dataframe, asks each

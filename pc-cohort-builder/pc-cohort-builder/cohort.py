@@ -27,6 +27,15 @@ class NodeConfigError(RuntimeError):
 MINIMUM_COUNT_ENV = "COHORT_BUILDER_MINIMUM_COUNT"
 DEFAULT_MINIMUM_COUNT = 5
 
+# The sql input runs the requester's own SQL with the node's credentials, so
+# a query can make the count encode any value it reads (one patient's year of
+# birth, say), whatever the minimum. Nodes accept it only when their
+# administrator opts in with ``algorithm_env: {COHORT_BUILDER_ALLOW_SQL: true}``;
+# ATLAS JSON, from which CirceR writes the SQL, is always accepted.
+ALLOW_SQL_ENV = "COHORT_BUILDER_ALLOW_SQL"
+_TRUE_VALUES = {"true", "1", "yes"}
+_FALSE_VALUES = {"false", "0", "no"}
+
 # Everything a node's cohort outcome may contain. The federated step returns
 # only these fields, whatever else the dataframe it is given holds.
 RESULT_FIELDS = (
@@ -347,6 +356,21 @@ def minimum_count(environ: Mapping[str, str] | None = None) -> int:
     if value < 1:
         raise NodeConfigError(f"{MINIMUM_COUNT_ENV} must be a positive integer")
     return value
+
+
+def sql_allowed(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether this node accepts the ``sql`` input (``COHORT_BUILDER_ALLOW_SQL``).
+
+    Off unless set to true; a value that is neither true nor false raises, so
+    a mistyped setting does not decide for the administrator.
+    """
+    environ = os.environ if environ is None else environ
+    raw = str(environ.get(ALLOW_SQL_ENV, "")).strip().lower()
+    if raw == "" or raw in _FALSE_VALUES:
+        return False
+    if raw in _TRUE_VALUES:
+        return True
+    raise NodeConfigError(f"{ALLOW_SQL_ENV} must be true or false")
 
 
 def withhold_small_count(row: Mapping[str, Any], minimum: int) -> dict[str, Any]:

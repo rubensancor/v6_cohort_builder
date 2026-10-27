@@ -26,7 +26,7 @@
         {
           "name": "sql",
           "display_name": "SQL",
-          "description": "OHDSI CohortGenerator SQL. Provide exactly one of sql or atlas_json.",
+          "description": "OHDSI CohortGenerator SQL. Provide exactly one of sql or atlas_json. Only nodes that set COHORT_BUILDER_ALLOW_SQL: true accept it.",
           "type": "string",
           "has_default_value": true,
           "is_frontend_only": false,

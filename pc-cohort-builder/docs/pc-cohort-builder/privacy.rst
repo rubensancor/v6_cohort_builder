@@ -26,6 +26,17 @@ Guards
   If the value is not a positive integer, the node refuses to generate the
   cohort and shares no count.
 
+- **No requester SQL by default**: the ``sql`` input runs the requester's own
+  SQL, which can make the count reveal any value (see *Reconstruction*
+  below). Nodes refuse it unless their administrator turns it on:
+
+  .. code:: yaml
+
+    algorithm_env:
+      COHORT_BUILDER_ALLOW_SQL: true
+
+  ``atlas_json`` is always accepted: CirceR writes the SQL from it.
+
 - **Only the cohort result leaves the node**: ``cohort_count`` can be pointed
   at any dataframe in the session. It returns only the fields of a cohort
   result (listed below), refuses a dataframe that is not one, and applies the
@@ -71,15 +82,16 @@ Vulnerabilities to known attacks
       - Risk analysis
     * - Reconstruction
       - ⚠
-      - Possible through the ``sql`` input, which runs the requester's SQL
-        with the node's database credentials. A query can insert into the
-        cohort table as many rows as a value it wants to learn (for example
-        one patient's year of birth), and the count then reveals that value,
-        above any minimum. The ATLAS input does not give the requester this
-        control: CirceR writes the SQL from the concept sets and criteria.
-        Node administrators should give the algorithm's database user
+      - Possible only at nodes that set ``COHORT_BUILDER_ALLOW_SQL: true``.
+        The ``sql`` input runs the requester's SQL with the node's database
+        credentials, so a query can insert into the cohort table as many rows
+        as a value it wants to learn (for example one patient's year of
+        birth), and the count then reveals that value, above any minimum. The
+        ATLAS input does not give the requester this control: CirceR writes
+        the SQL from the concept sets and criteria. Whatever the setting,
+        node administrators should give the algorithm's database user
         read-only access to the CDM schema and write access only to the
-        results schema; that limits damage to the data, but not this attack.
+        results schema.
     * - Differencing
       - ❌
       - Possible by requesting two cohorts that differ in one criterion, or

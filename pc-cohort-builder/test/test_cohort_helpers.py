@@ -520,3 +520,22 @@ def test_withhold_small_count_keeps_a_count_already_withheld():
 
     assert row["count"] is None
     assert row["below_minimum"] is True
+
+
+def test_sql_is_not_allowed_by_default():
+    assert cohort.sql_allowed({}) is False
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1", "yes"])
+def test_sql_is_allowed_when_the_node_opts_in(value):
+    assert cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": value}) is True
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no"])
+def test_sql_stays_off_when_the_node_says_no(value):
+    assert cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": value}) is False
+
+
+def test_sql_allowed_rejects_an_unclear_node_setting():
+    with pytest.raises(cohort.NodeConfigError, match="COHORT_BUILDER_ALLOW_SQL"):
+        cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": "maybe"})

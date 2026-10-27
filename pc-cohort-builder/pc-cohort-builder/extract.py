@@ -35,6 +35,7 @@ from .cohort import (
     execute_cohort_generation,
     minimum_count,
     parse_omop_config,
+    sql_allowed,
     validate_cohort_request,
     withhold_small_count,
 )
@@ -83,6 +84,11 @@ def _run_generate_cohort(
             cohort_id=cohort_id,
             overwrite=overwrite,
         )
+        if request.input_type == "sql" and not sql_allowed():
+            raise CohortInputError(
+                "This node does not accept SQL cohort definitions: send atlas_json, "
+                "or ask the node administrator to set COHORT_BUILDER_ALLOW_SQL: true"
+            )
         config = parse_omop_config(connection_details)
         minimum = minimum_count()
 
