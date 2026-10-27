@@ -34,6 +34,7 @@ from .cohort import (
     cohort_result_row,
     execute_cohort_generation,
     minimum_count,
+    node_identity,
     parse_omop_config,
     sql_allowed,
     validate_cohort_request,
@@ -122,7 +123,7 @@ def _run_generate_cohort(
             info(f"Cohort {request.cohort_id} holds {row['count']} subjects")
         return row
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        return cohort_result_row(
+        row = cohort_result_row(
             config=config,
             cohort_id=request.cohort_id if request else cohort_id,
             cohort_name=cohort_name,
@@ -130,6 +131,11 @@ def _run_generate_cohort(
             status="error",
             message=str(exc),
         )
+        if config is None:
+            # Failed before the connection was read: the ids still matter,
+            # since central_function matches rows to organizations by them.
+            row.update(node_identity())
+        return row
 
 
 @data_extraction

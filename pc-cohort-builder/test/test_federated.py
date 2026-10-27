@@ -276,6 +276,22 @@ def test_generate_cohort_refuses_sql_unless_the_node_allows_it(monkeypatch):
     assert ran == []
 
 
+def test_early_error_rows_say_which_node_they_come_from(monkeypatch):
+    # The central step matches rows to organizations by this field; without
+    # it the node is reported twice, once with its error and once as silent.
+    monkeypatch.setenv("ORGANIZATION_ID", "3")
+    monkeypatch.setenv("NODE_ID", "9")
+    monkeypatch.delenv("COHORT_BUILDER_ALLOW_SQL")
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "error"
+    assert row["organization_id"] == 3
+    assert row["node_id"] == 9
+
+
 def test_generate_cohort_accepts_atlas_json_when_sql_is_not_allowed(monkeypatch):
     monkeypatch.delenv("COHORT_BUILDER_ALLOW_SQL")
     monkeypatch.setattr(extract, "atlas_json_to_sql", lambda atlas: "SELECT 1")

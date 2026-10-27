@@ -338,6 +338,23 @@ def cohort_result_row(
     }
 
 
+def node_identity(environ: Mapping[str, str] | None = None) -> dict[str, int | None]:
+    """This node's organization and node ids, for a row written before the
+    OMOP connection was read.
+
+    Unreadable ids come back as None instead of raising, since this runs
+    while another error is being reported.
+    """
+    environ = os.environ if environ is None else environ
+    identity: dict[str, int | None] = {}
+    for field, key in (("organization_id", "ORGANIZATION_ID"), ("node_id", "NODE_ID")):
+        try:
+            identity[field] = _optional_int(environ, key)
+        except NodeConfigError:
+            identity[field] = None
+    return identity
+
+
 def minimum_count(environ: Mapping[str, str] | None = None) -> int:
     """The node's minimum shareable count (``COHORT_BUILDER_MINIMUM_COUNT``).
 
