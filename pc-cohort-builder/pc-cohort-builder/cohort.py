@@ -20,6 +20,32 @@ class NodeConfigError(RuntimeError):
     """Raised when a node is missing required OMOP configuration."""
 
 
+# Counts from 1 up to this minimum never leave a node: a cohort of two
+# children at one hospital can identify them. Node administrators set their
+# own minimum with ``algorithm_env: {COHORT_BUILDER_MINIMUM_COUNT: <n>}`` in
+# the node configuration, as with the other PROTECT-CHILD algorithms.
+MINIMUM_COUNT_ENV = "COHORT_BUILDER_MINIMUM_COUNT"
+DEFAULT_MINIMUM_COUNT = 5
+
+# Everything a node's cohort outcome may contain. The federated step returns
+# only these fields, whatever else the dataframe it is given holds.
+RESULT_FIELDS = (
+    "organization_id",
+    "node_id",
+    "status",
+    "cohort_id",
+    "cohort_name",
+    "input_type",
+    "database",
+    "cdm_schema",
+    "results_schema",
+    "count",
+    "message",
+    "below_minimum",
+    "minimum_count",
+)
+
+
 @dataclass(frozen=True)
 class CohortRequest:
     cohort_name: str
@@ -300,6 +326,42 @@ def cohort_result_row(
         ),
         "count": count,
         "message": message,
+    }
+
+
+def minimum_count(environ: Mapping[str, str] | None = None) -> int:
+    """The node's minimum shareable count (``COHORT_BUILDER_MINIMUM_COUNT``).
+
+    An invalid setting raises instead of falling back to the default, so a
+    node whose administrator mistyped it shares nothing rather than counts
+    under a threshold they did not choose.
+    """
+    environ = os.environ if environ is None else environ
+    raw = environ.get(MINIMUM_COUNT_ENV)
+    if raw in (None, ""):
+        return DEFAULT_MINIMUM_COUNT
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise NodeConfigError(f"{MINIMUM_COUNT_ENV} must be a positive integer") from exc
+    if value < 1:
+        raise NodeConfigError(f"{MINIMUM_COUNT_ENV} must be a positive integer")
+    return value
+
+
+def withhold_small_count(row: Mapping[str, Any], minimum: int) -> dict[str, Any]:
+    """Blank out a count from 1 to ``minimum - 1``; zero and larger counts stay.
+
+    The row records that it was withheld and the minimum used, so a client
+    can show "fewer than 5" instead of a missing value.
+    """
+    count = row.get("count")
+    below = bool(row.get("below_minimum")) or (count is not None and 0 < count < minimum)
+    return {
+        **row,
+        "count": None if below else count,
+        "below_minimum": below,
+        "minimum_count": minimum,
     }
 
 

@@ -66,7 +66,19 @@ client runs in order (`README-v5.md` explains why):
    `overwrite`. It writes the cohort to the node's results `cohort` table and
    leaves a one-row dataframe with the outcome in the session.
 2. `cohort_count`, a federated step on that dataframe. It returns each node's
-   row: `status`, `cohort_id`, `count` and, on failure, `message`.
+   row: `status`, `cohort_id`, `count`, `below_minimum`, `minimum_count` and,
+   on failure, `message`. It returns nothing else, whatever dataframe it is
+   given.
+
+A count from 1 up to the node's minimum (5 by default) never leaves the node:
+the row carries `count: null` and `below_minimum: true` instead, and the
+algorithm log does not print it either. Zero is shared. Node administrators
+choose their own minimum in the node configuration:
+
+```yaml
+algorithm_env:
+  COHORT_BUILDER_MINIMUM_COUNT: 5
+```
 
 Pass the same `cohort_id` to every node: when it is omitted, each node makes
 one up from the current time. If a node already holds rows for that cohort id,

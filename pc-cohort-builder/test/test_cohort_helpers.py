@@ -472,3 +472,43 @@ def test_load_ohdsi_modules_uses_python_ohdsi_common(monkeypatch):
     assert common is fakes["common"]
     assert cohort_generator is fakes["cohort_generator"]
     assert database_connector is fakes["database_connector"]
+
+
+def test_minimum_count_defaults_to_five():
+    assert cohort.minimum_count({}) == 5
+
+
+def test_minimum_count_reads_the_node_setting():
+    assert cohort.minimum_count({"COHORT_BUILDER_MINIMUM_COUNT": "10"}) == 10
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-3"])
+def test_minimum_count_rejects_invalid_node_settings(value):
+    with pytest.raises(cohort.NodeConfigError, match="COHORT_BUILDER_MINIMUM_COUNT"):
+        cohort.minimum_count({"COHORT_BUILDER_MINIMUM_COUNT": value})
+
+
+@pytest.mark.parametrize("count", [1, 4])
+def test_withhold_small_count_hides_counts_below_the_minimum(count):
+    row = cohort.withhold_small_count({"status": "success", "count": count}, minimum=5)
+
+    assert row["count"] is None
+    assert row["below_minimum"] is True
+    assert row["minimum_count"] == 5
+
+
+@pytest.mark.parametrize("count", [0, 5, 42])
+def test_withhold_small_count_shares_zero_and_counts_at_the_minimum(count):
+    row = cohort.withhold_small_count({"status": "success", "count": count}, minimum=5)
+
+    assert row["count"] == count
+    assert row["below_minimum"] is False
+
+
+def test_withhold_small_count_keeps_a_count_already_withheld():
+    row = cohort.withhold_small_count(
+        {"status": "success", "count": None, "below_minimum": True}, minimum=5
+    )
+
+    assert row["count"] is None
+    assert row["below_minimum"] is True

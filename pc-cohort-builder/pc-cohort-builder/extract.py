@@ -33,8 +33,10 @@ from .cohort import (
     atlas_json_to_sql,
     cohort_result_row,
     execute_cohort_generation,
+    minimum_count,
     parse_omop_config,
     validate_cohort_request,
+    withhold_small_count,
 )
 
 DecoratedFunction = TypeVar("DecoratedFunction", bound=Callable[..., Any])
@@ -67,6 +69,9 @@ def _run_generate_cohort(
     Errors are reported inside the row rather than raised: an extraction step
     that raises produces no dataframe at all, and the client would then only
     learn that the run crashed, not why.
+
+    A count below the node's minimum is withheld here, before it reaches the
+    row or the log, so the exact number never leaves the node.
     """
     config: OmopConfig | None = None
     request = None
@@ -79,6 +84,7 @@ def _run_generate_cohort(
             overwrite=overwrite,
         )
         config = parse_omop_config(connection_details)
+        minimum = minimum_count()
 
         cohort_sql = request.sql
         if request.atlas_json is not None:
@@ -93,15 +99,22 @@ def _run_generate_cohort(
             cohort_id=request.cohort_id,
             overwrite=request.overwrite,
         )
-        info(f"Cohort {request.cohort_id} holds {outcome['count']} subjects")
-        return cohort_result_row(
-            config=config,
-            cohort_id=request.cohort_id,
-            cohort_name=request.cohort_name,
-            input_type=request.input_type,
-            status="success",
-            **outcome,
+        row = withhold_small_count(
+            cohort_result_row(
+                config=config,
+                cohort_id=request.cohort_id,
+                cohort_name=request.cohort_name,
+                input_type=request.input_type,
+                status="success",
+                **outcome,
+            ),
+            minimum,
         )
+        if row["below_minimum"]:
+            info(f"Cohort {request.cohort_id} has fewer than {minimum} subjects; count withheld")
+        else:
+            info(f"Cohort {request.cohort_id} holds {row['count']} subjects")
+        return row
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return cohort_result_row(
             config=config,

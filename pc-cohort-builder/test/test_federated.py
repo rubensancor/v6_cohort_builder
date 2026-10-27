@@ -84,6 +84,8 @@ def test_generate_cohort_returns_success_row(monkeypatch):
         "results_schema": "results",
         "count": 42,
         "message": None,
+        "below_minimum": False,
+        "minimum_count": 5,
     }
 
 
@@ -202,6 +204,56 @@ def test_generate_cohort_connects_with_the_connection_details_it_is_given(monkey
     assert config.results_schema == "results"
 
 
+def test_generate_cohort_withholds_counts_below_the_minimum(monkeypatch):
+    monkeypatch.delenv("COHORT_BUILDER_MINIMUM_COUNT", raising=False)
+    logged = []
+    monkeypatch.setattr(extract, "info", logged.append)
+    monkeypatch.setattr(
+        extract, "execute_cohort_generation", lambda **_: {"count": 3}
+    )
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "success"
+    assert row["count"] is None
+    assert row["below_minimum"] is True
+    assert row["minimum_count"] == 5
+    # Algorithm logs can be shared with HQ, so they must not carry it either.
+    assert not any("3" in message for message in logged)
+
+
+def test_generate_cohort_uses_the_node_minimum(monkeypatch):
+    monkeypatch.setenv("COHORT_BUILDER_MINIMUM_COUNT", "2")
+    monkeypatch.setattr(
+        extract, "execute_cohort_generation", lambda **_: {"count": 3}
+    )
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["count"] == 3
+    assert row["minimum_count"] == 2
+
+
+def test_generate_cohort_does_not_run_with_an_invalid_minimum(monkeypatch):
+    monkeypatch.setenv("COHORT_BUILDER_MINIMUM_COUNT", "abc")
+    ran = []
+    monkeypatch.setattr(
+        extract, "execute_cohort_generation", lambda **_: ran.append(1) or {"count": 3}
+    )
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "error"
+    assert row["count"] is None
+    assert ran == []
+
+
 def test_cohort_count_returns_the_extracted_row_as_plain_json():
     frame = pd.DataFrame([{
         "organization_id": 3, "status": "success", "cohort_id": 55, "count": 42,
@@ -221,6 +273,38 @@ def test_cohort_count_handles_an_empty_session():
     result = federated._run_cohort_count(pd.DataFrame())
 
     assert result["status"] == "error"
+
+
+def test_cohort_count_returns_only_cohort_result_fields():
+    frame = pd.DataFrame([{
+        "organization_id": 3, "status": "success", "cohort_id": 55, "count": 42,
+        "message": None, "person_id": 1234, "year_of_birth": 2015,
+    }])
+
+    result = federated._run_cohort_count(frame)
+
+    assert "person_id" not in result
+    assert "year_of_birth" not in result
+
+
+def test_cohort_count_refuses_a_dataframe_that_is_not_a_cohort_result():
+    # e.g. a person table some other extraction left in the session
+    frame = pd.DataFrame([{"person_id": 1234, "gender_concept_id": 8507}])
+
+    result = federated._run_cohort_count(frame)
+
+    assert result["status"] == "error"
+    assert "1234" not in str(result)
+
+
+def test_cohort_count_withholds_small_counts_it_receives(monkeypatch):
+    monkeypatch.delenv("COHORT_BUILDER_MINIMUM_COUNT", raising=False)
+    frame = pd.DataFrame([{"status": "success", "cohort_id": 55, "count": 2}])
+
+    result = federated._run_cohort_count(frame)
+
+    assert result["count"] is None
+    assert result["below_minimum"] is True
 
 
 def test_legacy_generate_cohort_count_explains_why_it_cannot_run():

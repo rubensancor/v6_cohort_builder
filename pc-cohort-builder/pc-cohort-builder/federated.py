@@ -12,6 +12,8 @@ from typing import Any, Callable, TypeVar
 
 import pandas as pd
 
+from .cohort import RESULT_FIELDS, NodeConfigError, minimum_count, withhold_small_count
+
 DecoratedFunction = TypeVar("DecoratedFunction", bound=Callable[..., Any])
 
 
@@ -32,18 +34,35 @@ except ValueError as exc:  # rpy2 without R at import time, e.g. in unit tests
 
 
 def _run_cohort_count(df: pd.DataFrame) -> dict[str, Any]:
+    """Hand back the cohort outcome row, and nothing else.
+
+    The step can be pointed at any dataframe in the session, so it returns
+    only the cohort result fields, refuses a dataframe that is not one, and
+    applies the node's minimum count again.
+    """
     if df is None or df.empty:
         return {"status": "error", "message": "No cohort result found in the session"}
+    if not {"status", "count"}.issubset(df.columns):
+        return {
+            "status": "error",
+            "message": "The dataframe is not a cohort result from generate_cohort",
+        }
     row = df.iloc[0].to_dict()
     # Parquet round-trips numpy scalars; the client expects plain JSON types.
     clean: dict[str, Any] = {}
-    for key, value in row.items():
+    for key in RESULT_FIELDS:
+        if key not in row:
+            continue
+        value = row[key]
         if hasattr(value, "item"):
             value = value.item()
         if value != value:  # NaN
             value = None
         clean[key] = value
-    return clean
+    try:
+        return withhold_small_count(clean, minimum_count())
+    except NodeConfigError as exc:
+        return {"status": "error", "cohort_id": clean.get("cohort_id"), "message": str(exc)}
 
 
 @federated
