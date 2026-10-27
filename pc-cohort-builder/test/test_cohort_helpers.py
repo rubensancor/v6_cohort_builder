@@ -450,3 +450,25 @@ def test_execute_cohort_generation_uses_ohdsi_wrappers_and_returns_count(monkeyp
     )
     assert calls[8] == ("convert_from_r", "r-counts")
     assert calls[9][0] == "disconnect"
+
+
+def test_load_ohdsi_modules_uses_python_ohdsi_common(monkeypatch):
+    # The algorithm-ohdsi-base image carries FeatureExtraction, which
+    # ohdsi.common loads on import, so the package's own converters are used.
+    import sys
+    import types
+
+    package = types.ModuleType("ohdsi")
+    package.__path__ = []
+    fakes = {}
+    for name in ("common", "cohort_generator", "database_connector"):
+        fakes[name] = types.ModuleType(f"ohdsi.{name}")
+        setattr(package, name, fakes[name])
+        monkeypatch.setitem(sys.modules, f"ohdsi.{name}", fakes[name])
+    monkeypatch.setitem(sys.modules, "ohdsi", package)
+
+    common, cohort_generator, database_connector = cohort._load_ohdsi_modules()
+
+    assert common is fakes["common"]
+    assert cohort_generator is fakes["cohort_generator"]
+    assert database_connector is fakes["database_connector"]

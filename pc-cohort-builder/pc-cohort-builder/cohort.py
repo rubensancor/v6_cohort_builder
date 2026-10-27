@@ -136,9 +136,7 @@ def atlas_json_to_sql(atlas_json: str) -> str:
 
 
 def _load_ohdsi_modules() -> tuple[Any, Any, Any]:
-    # ``ohdsi.common`` is deliberately not used: importing it loads the R
-    # package FeatureExtraction, which the image does not carry (see rconvert).
-    from . import rconvert as common  # pylint: disable=import-outside-toplevel
+    from ohdsi import common  # pylint: disable=import-outside-toplevel
     from ohdsi import cohort_generator  # pylint: disable=import-outside-toplevel
     from ohdsi import database_connector  # pylint: disable=import-outside-toplevel
 
