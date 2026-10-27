@@ -42,77 +42,48 @@ code for TODO instead of following the checklist below.
 
 ### OHDSI dependencies
 
-The algorithm installs the Python wrappers from
-[`vantage6/python-ohdsi`](https://github.com/vantage6/python-ohdsi) through the
-`ohdsi-*` packages in `pyproject.toml`. These packages depend on `rpy2`, so a
-working R installation must be available when installing or running the
-algorithm. The Dockerfile installs R, Java, and the required OHDSI R packages.
+The image builds on vantage6's `algorithm-ohdsi-base` (pinned by digest in the
+`Dockerfile`), which carries R, Java and the OHDSI R packages with their
+[`vantage6/python-ohdsi`](https://github.com/vantage6/python-ohdsi) wrappers.
+`pyproject.toml` adds the `ohdsi-*` packages the base lacks and pins `rpy2` to
+the versions that load against the base's R 4.2.
 
-For local development, install R first and then run:
+Running the OHDSI code outside the image needs R, Java and those R packages.
+The unit tests stub the OHDSI calls and need none of them:
 
 ```bash
-uv sync --group dev
+python -m pytest test/test_cohort_helpers.py test/test_federated.py test/test_central.py
 ```
 
 ### Usage
 
-Submit `central_function` from the vantage6 client with either CohortGenerator
-SQL or an ATLAS cohort expression JSON. Provide exactly one of `sql` or
-`atlas_json`.
+On vantage6 5 a cohort is built in one session with two steps, which the
+client runs in order (`README-v5.md` explains why):
 
-Example central call with SQL:
+1. `generate_cohort`, a data-extraction step on each node's `omop` database,
+   with `cohort_name` and exactly one of `sql` (OHDSI CohortGenerator SQL) or
+   `atlas_json` (an ATLAS cohort expression), plus optional `cohort_id` and
+   `overwrite`. It writes the cohort to the node's results `cohort` table and
+   leaves a one-row dataframe with the outcome in the session.
+2. `cohort_count`, a federated step on that dataframe. It returns each node's
+   row: `status`, `cohort_id`, `count` and, on failure, `message`.
 
-```python
-task = client.task.create(
-    method="central_function",
-    arguments={
-        "cohort_name": "Adults born after 1970",
-        "sql": "SELECT * FROM @cdm_database_schema.person WHERE year_of_birth >= 1970",
-        "cohort_id": 1001,
-        "overwrite": False,
-    },
-    organizations=[1],
-)
-result = client.wait_for_results(task_id=task["id"])
-```
+Pass the same `cohort_id` to every node: when it is omitted, each node makes
+one up from the current time. If a node already holds rows for that cohort id,
+generation fails unless `overwrite` is true.
 
-Example central call with ATLAS JSON:
+A reference client that runs both steps and adds up the counts is
+`src/vantage6_cohort.py` in the PROTECT-CHILD app repository
+(`pc_cohort_langgraph`); `deploy/omop/run-cohort-builder.py` there drives it
+from the command line.
 
-```python
-task = client.task.create(
-    method="central_function",
-    arguments={
-        "cohort_name": "ATLAS phenotype",
-        "atlas_json": atlas_expression_json,
-        "overwrite": False,
-    },
-    organizations=[1],
-)
-result = client.wait_for_results(task_id=task["id"])
-```
-
-If `cohort_id` is omitted, the central function generates a positive identifier
-and sends that same id to every federated node. If a node already contains rows
-for that cohort id, cohort generation fails unless `overwrite` is `True`.
-
-The central result contains each successful node's exact `count`. `total_count`
-is the sum of those counts only when all expected nodes return success; if any
-node returns an error or is missing, `total_count` is `null` and the failed node
-details are listed in `errors`.
-
-Each node that runs `generate_cohort_count` must be configured for an OMOP CDM
-database with these environment values:
-
-```text
-DATABASE_URI=jdbc:postgresql://host:5432/omop
-DATABASE_TYPE=OMOP
-DB_PARAM_DBMS=postgresql
-DB_PARAM_USER=...
-DB_PARAM_PASSWORD=...
-DB_PARAM_CDM_DATABASE=omop
-DB_PARAM_CDM_SCHEMA=cdm
-DB_PARAM_RESULTS_SCHEMA=results
-```
+Each node needs an OMOP CDM database of type `omop` whose `env` block gives
+`dbms`, `user`, `password`, `cdm_database`, `cdm_schema` and
+`results_schema` (example in `README-v5.md`). The node hands them to the
+algorithm container as `DATABASE_URI`, `DATABASE_TYPE` and `DB_PARAM_*`, and
+the `@data_extraction` decorator passes them to `generate_cohort` as
+`connection_details`: `uri`, `type`, `DBMS`, `USER`, `PASSWORD`,
+`CDM_DATABASE`, `CDM_SCHEMA` and `RESULTS_SCHEMA`.
 
 ### Local OMOP smoke test
 
