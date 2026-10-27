@@ -2,8 +2,9 @@
 
 Why this is a data-extraction step and not a federated one
 ----------------------------------------------------------
-vantage6 5 hands a task the node's database connection — DATABASE_URI and the
-DB_PARAM_* variables — only when the task's action is ``data_extraction``.
+vantage6 5 hands a task the node's database connection — the
+``connection_details`` the ``@data_extraction`` decorator passes in — only
+when the task's action is ``data_extraction``.
 Federated and central compute steps run without any database access, by
 design: they are meant to work on dataframes the extraction step produced.
 
@@ -54,6 +55,7 @@ except ValueError as exc:  # rpy2 without R at import time, e.g. in unit tests
 
 
 def _run_generate_cohort(
+    connection_details: dict,
     cohort_name: str,
     sql: str | None = None,
     atlas_json: str | dict[str, Any] | None = None,
@@ -76,7 +78,7 @@ def _run_generate_cohort(
             cohort_id=cohort_id,
             overwrite=overwrite,
         )
-        config = parse_omop_config()
+        config = parse_omop_config(connection_details)
 
         cohort_sql = request.sql
         if request.atlas_json is not None:
@@ -122,12 +124,13 @@ def generate_cohort(
 ) -> pd.DataFrame:
     """Generate a cohort in this node's OMOP database and return its count.
 
-    ``connection_details`` is supplied by the node; the OMOP parameters are also
-    available as DB_PARAM_* variables, which is what ``parse_omop_config`` reads.
+    ``connection_details`` is supplied by the node: ``uri``, ``type`` and the
+    database's ``env`` settings (``DBMS``, ``USER``, ``PASSWORD``,
+    ``CDM_DATABASE``, ``CDM_SCHEMA``, ``RESULTS_SCHEMA``).
     Provide exactly one of ``sql`` or ``atlas_json``.
     """
-    del connection_details  # parse_omop_config reads the same values from the env
     row = _run_generate_cohort(
+        connection_details,
         cohort_name=cohort_name,
         sql=sql,
         atlas_json=atlas_json,

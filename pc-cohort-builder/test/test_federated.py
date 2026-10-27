@@ -23,7 +23,20 @@ def undecorated(func):
     return getattr(func, "__wrapped__", func)
 
 
-def _config() -> "cohort.OmopConfig":
+# What the @data_extraction decorator passes as connection_details.
+CONNECTION_DETAILS = {
+    "uri": "jdbc:postgresql://db:5432/omop",
+    "type": "OMOP",
+    "DBMS": "postgresql",
+    "USER": "omop_admin",
+    "PASSWORD": "change-me-before-deploying",
+    "CDM_DATABASE": "omop_cdm",
+    "CDM_SCHEMA": "cdm",
+    "RESULTS_SCHEMA": "results",
+}
+
+
+def _config(connection_details=None, environ=None) -> "cohort.OmopConfig":
     return cohort.OmopConfig(
         uri="jdbc:postgresql://db:5432/omop",
         database_type="OMOP",
@@ -52,6 +65,7 @@ def test_generate_cohort_returns_success_row(monkeypatch):
     )
 
     row = extract._run_generate_cohort(
+        CONNECTION_DETAILS,
         sql="select * from cohort_sql",
         cohort_name="Death cohort",
         cohort_id=55,
@@ -85,6 +99,7 @@ def test_generate_cohort_converts_atlas_json_before_generating(monkeypatch):
     monkeypatch.setattr(extract, "execute_cohort_generation", fake_execute)
 
     row = extract._run_generate_cohort(
+        CONNECTION_DETAILS,
         cohort_name="Atlas cohort",
         atlas_json={"ConceptSets": []},
         cohort_id=1,
@@ -99,11 +114,11 @@ def test_generate_cohort_reports_config_errors_in_the_row(monkeypatch):
     monkeypatch.setattr(
         extract,
         "parse_omop_config",
-        lambda: (_ for _ in ()).throw(cohort.NodeConfigError("missing password")),
+        lambda *_: (_ for _ in ()).throw(cohort.NodeConfigError("missing password")),
     )
 
     row = extract._run_generate_cohort(
-        sql="select 1", cohort_name="Death cohort", cohort_id=55
+        CONNECTION_DETAILS, sql="select 1", cohort_name="Death cohort", cohort_id=55
     )
 
     # An extraction step that raises leaves no dataframe behind, so the
@@ -123,7 +138,7 @@ def test_generate_cohort_reports_execution_errors_in_the_row(monkeypatch):
     )
 
     row = extract._run_generate_cohort(
-        sql="select 1", cohort_name="Death cohort", cohort_id=55
+        CONNECTION_DETAILS, sql="select 1", cohort_name="Death cohort", cohort_id=55
     )
 
     assert row["status"] == "error"
@@ -134,25 +149,57 @@ def test_generate_cohort_reports_execution_errors_in_the_row(monkeypatch):
 def test_generate_cohort_rejects_invalid_requests_in_the_row(monkeypatch):
     monkeypatch.setattr(extract, "parse_omop_config", _config)
 
-    row = extract._run_generate_cohort(cohort_name="", sql="select 1", cohort_id=1)
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, cohort_name="", sql="select 1", cohort_id=1
+    )
 
     assert row["status"] == "error"
     assert "cohort_name" in row["message"]
 
 
 def test_generate_cohort_wraps_the_row_in_a_dataframe(monkeypatch):
-    monkeypatch.setattr(
-        extract, "_run_generate_cohort",
-        lambda **kw: {"status": "success", "count": 3, "cohort_id": kw["cohort_id"]},
-    )
+    seen = {}
+
+    def fake_run(connection_details, **kw):
+        seen["connection_details"] = connection_details
+        return {"status": "success", "count": 3, "cohort_id": kw["cohort_id"]}
+
+    monkeypatch.setattr(extract, "_run_generate_cohort", fake_run)
 
     frame = undecorated(extract.generate_cohort)(
-        {"uri": "jdbc:postgresql://db/omop"}, cohort_name="c", sql="select 1", cohort_id=9
+        CONNECTION_DETAILS, cohort_name="c", sql="select 1", cohort_id=9
     )
 
+    assert seen["connection_details"] is CONNECTION_DETAILS
     assert isinstance(frame, pd.DataFrame)
     assert len(frame) == 1
     assert frame.iloc[0]["count"] == 3
+
+
+def test_generate_cohort_connects_with_the_connection_details_it_is_given(monkeypatch):
+    # The node also exports these as DB_PARAM_* variables; they must not be
+    # what the algorithm reads.
+    for name in ("DATABASE_URI", "DATABASE_TYPE", "DB_PARAM_USER", "DB_PARAM_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    seen = {}
+
+    def fake_execute(config, sql, cohort_name, cohort_id, overwrite):
+        seen["config"] = config
+        return {"count": 1}
+
+    monkeypatch.setattr(extract, "execute_cohort_generation", fake_execute)
+
+    row = extract._run_generate_cohort(
+        CONNECTION_DETAILS, sql="select 1", cohort_name="c", cohort_id=1
+    )
+
+    assert row["status"] == "success"
+    config = seen["config"]
+    assert config.uri == "jdbc:postgresql://db:5432/omop"
+    assert config.user == "omop_admin"
+    assert config.password == "change-me-before-deploying"
+    assert config.cdm_database == "omop_cdm"
+    assert config.results_schema == "results"
 
 
 def test_cohort_count_returns_the_extracted_row_as_plain_json():

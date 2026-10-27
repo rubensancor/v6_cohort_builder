@@ -231,31 +231,42 @@ def execute_cohort_generation(
             database_connector.disconnect(connection)
 
 
-def parse_omop_config(environ: Mapping[str, str] | None = None) -> OmopConfig:
+def parse_omop_config(
+    connection_details: Mapping[str, str],
+    environ: Mapping[str, str] | None = None,
+) -> OmopConfig:
+    """Read the OMOP connection from the ``connection_details`` the
+    ``@data_extraction`` decorator passes in.
+
+    The decorator fills that dict from the node's database configuration:
+    ``uri`` and ``type``, plus every ``DB_PARAM_<NAME>`` as ``<NAME>`` (the
+    ``env`` block of the node's database entry). The organization and node
+    ids are not database settings, so they still come from the environment.
+    """
     environ = os.environ if environ is None else environ
     required_keys = [
-        "DATABASE_URI",
-        "DATABASE_TYPE",
-        "DB_PARAM_DBMS",
-        "DB_PARAM_USER",
-        "DB_PARAM_PASSWORD",
-        "DB_PARAM_CDM_DATABASE",
-        "DB_PARAM_CDM_SCHEMA",
-        "DB_PARAM_RESULTS_SCHEMA",
+        "uri",
+        "type",
+        "DBMS",
+        "USER",
+        "PASSWORD",
+        "CDM_DATABASE",
+        "CDM_SCHEMA",
+        "RESULTS_SCHEMA",
     ]
-    missing = [key for key in required_keys if not environ.get(key)]
+    missing = [key for key in required_keys if not connection_details.get(key)]
     if missing:
         raise NodeConfigError(f"Missing required OMOP configuration: {', '.join(missing)}")
 
     return OmopConfig(
-        uri=environ["DATABASE_URI"],
-        database_type=environ["DATABASE_TYPE"],
-        dbms=environ["DB_PARAM_DBMS"],
-        user=environ["DB_PARAM_USER"],
-        password=environ["DB_PARAM_PASSWORD"],
-        cdm_database=environ["DB_PARAM_CDM_DATABASE"],
-        cdm_schema=environ["DB_PARAM_CDM_SCHEMA"],
-        results_schema=environ["DB_PARAM_RESULTS_SCHEMA"],
+        uri=connection_details["uri"],
+        database_type=connection_details["type"],
+        dbms=connection_details["DBMS"],
+        user=connection_details["USER"],
+        password=connection_details["PASSWORD"],
+        cdm_database=connection_details["CDM_DATABASE"],
+        cdm_schema=connection_details["CDM_SCHEMA"],
+        results_schema=connection_details["RESULTS_SCHEMA"],
         organization_id=_optional_int(environ, "ORGANIZATION_ID"),
         node_id=_optional_int(environ, "NODE_ID"),
     )

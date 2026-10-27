@@ -99,21 +99,25 @@ def test_normalize_atlas_json_reports_non_serializable_values():
         cohort.normalize_atlas_json({"ConceptSets": [object()]})
 
 
-def test_parse_omop_config_reads_vantage6_database_environment():
-    env = {
-        "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-        "DATABASE_TYPE": "OMOP",
-        "DB_PARAM_DBMS": "postgresql",
-        "DB_PARAM_USER": "user",
-        "DB_PARAM_PASSWORD": "secret",
-        "DB_PARAM_CDM_DATABASE": "omop",
-        "DB_PARAM_CDM_SCHEMA": "cdm",
-        "DB_PARAM_RESULTS_SCHEMA": "results",
-        "ORGANIZATION_ID": "3",
-        "NODE_ID": "9",
+def _connection_details() -> dict:
+    """What the @data_extraction decorator hands the function: DATABASE_URI and
+    DATABASE_TYPE as uri/type, and every DB_PARAM_<NAME> as <NAME>."""
+    return {
+        "uri": "jdbc:postgresql://db:5432/omop",
+        "type": "OMOP",
+        "DBMS": "postgresql",
+        "USER": "user",
+        "PASSWORD": "secret",
+        "CDM_DATABASE": "omop",
+        "CDM_SCHEMA": "cdm",
+        "RESULTS_SCHEMA": "results",
     }
 
-    config = cohort.parse_omop_config(env)
+
+def test_parse_omop_config_reads_the_connection_details():
+    config = cohort.parse_omop_config(
+        _connection_details(), {"ORGANIZATION_ID": "3", "NODE_ID": "9"}
+    )
 
     assert config.uri == "jdbc:postgresql://db:5432/omop"
     assert config.database_type == "OMOP"
@@ -128,35 +132,16 @@ def test_parse_omop_config_reads_vantage6_database_environment():
 
 
 def test_parse_omop_config_reports_missing_keys():
-    with pytest.raises(cohort.NodeConfigError, match="DB_PARAM_PASSWORD"):
-        cohort.parse_omop_config(
-            {
-                "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-                "DATABASE_TYPE": "OMOP",
-                "DB_PARAM_DBMS": "postgresql",
-                "DB_PARAM_USER": "user",
-                "DB_PARAM_CDM_DATABASE": "omop",
-                "DB_PARAM_CDM_SCHEMA": "cdm",
-                "DB_PARAM_RESULTS_SCHEMA": "results",
-            }
-        )
+    details = _connection_details()
+    del details["PASSWORD"]
+
+    with pytest.raises(cohort.NodeConfigError, match="configuration: PASSWORD$"):
+        cohort.parse_omop_config(details, {})
 
 
 def test_parse_omop_config_reports_invalid_optional_ids():
     with pytest.raises(cohort.NodeConfigError, match="ORGANIZATION_ID must be an integer"):
-        cohort.parse_omop_config(
-            {
-                "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-                "DATABASE_TYPE": "OMOP",
-                "DB_PARAM_DBMS": "postgresql",
-                "DB_PARAM_USER": "user",
-                "DB_PARAM_PASSWORD": "secret",
-                "DB_PARAM_CDM_DATABASE": "omop",
-                "DB_PARAM_CDM_SCHEMA": "cdm",
-                "DB_PARAM_RESULTS_SCHEMA": "results",
-                "ORGANIZATION_ID": "abc",
-            }
-        )
+        cohort.parse_omop_config(_connection_details(), {"ORGANIZATION_ID": "abc"})
 
 
 def test_extract_subject_count_from_cohort_counts_dataframe():
