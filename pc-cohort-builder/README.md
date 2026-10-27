@@ -58,7 +58,9 @@ python -m pytest test/test_cohort_helpers.py test/test_federated.py test/test_ce
 ### Usage
 
 On vantage6 5 a cohort is built in one session with two steps, which the
-client runs in order (`README-v5.md` explains why):
+client runs in order (`README-v5.md` explains why): `generate_cohort`, then
+either `central_function` for the total or `cohort_count` for each node's
+row.
 
 1. `generate_cohort`, a data-extraction step on each node's `omop` database,
    with `cohort_name` and exactly one of `sql` (OHDSI CohortGenerator SQL) or
@@ -79,6 +81,12 @@ choose their own minimum in the node configuration:
 algorithm_env:
   COHORT_BUILDER_MINIMUM_COUNT: 5
 ```
+
+`central_function`, a central step run on the same dataframe, asks each
+node's `cohort_count` (optionally only `organizations_to_include`) and returns
+every node's row, the errors and the total: `total_count` when it is exact,
+and `total_range`, the lowest and highest possible total, when some node
+withheld its count.
 
 Pass the same `cohort_id` to every node: when it is omitted, each node makes
 one up from the current time. If a node already holds rows for that cohort id,

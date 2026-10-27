@@ -1,9 +1,12 @@
 """
-Central cohort builder entrypoint.
+Central entrypoint: add up the cohort counts of every node.
 
-The central node validates cohort input, converts ATLAS JSON to OHDSI
-CohortGenerator SQL when needed, dispatches cohort generation to all
-organizations, and aggregates exact patient counts.
+Run it in the session, on the dataframe ``generate_cohort`` left there. The
+subtasks it creates inherit that dataframe, so each node's ``cohort_count``
+reads its own outcome row back; this function then combines the rows into
+one total. It cannot generate the cohort itself: on vantage6 5 the subtasks
+a central function creates are federated steps, which get no database
+access.
 """
 
 from __future__ import annotations
@@ -13,11 +16,7 @@ from typing import Any, Callable, TypeVar
 from vantage6.algorithm.client import AlgorithmClient
 from vantage6.algorithm.tools.util import info
 
-from .cohort import (
-    aggregate_central_results,
-    atlas_json_to_sql,
-    validate_cohort_request,
-)
+from .cohort import aggregate_central_results
 
 DecoratedFunction = TypeVar("DecoratedFunction", bound=Callable[..., Any])
 
@@ -38,92 +37,56 @@ except ValueError as exc:
 
 def _run_central_function(
     client: AlgorithmClient,
-    cohort_name: str,
-    sql: str | None = None,
-    atlas_json: str | dict[str, Any] | None = None,
-    cohort_id: int | None = None,
-    overwrite: bool = False,
+    organizations_to_include: list[int] | None = None,
 ) -> dict[str, Any]:
-    request = validate_cohort_request(
-        cohort_name=cohort_name,
-        sql=sql,
-        atlas_json=atlas_json,
-        cohort_id=cohort_id,
-        overwrite=overwrite,
-    )
+    available = [organization["id"] for organization in client.organization.list()]
+    if organizations_to_include is None:
+        org_ids = available
+    else:
+        org_ids = list(organizations_to_include)
+        unknown = sorted(set(org_ids) - set(available))
+        if unknown:
+            return {
+                "status": "error",
+                "message": f"Organizations not in the collaboration: {unknown}",
+            }
 
-    cohort_sql = request.sql
-    if request.atlas_json is not None:
-        info("Converting ATLAS JSON to OHDSI CohortGenerator SQL")
-        cohort_sql = atlas_json_to_sql(request.atlas_json)
-
-    organizations = client.organization.list()
-    org_ids = [organization["id"] for organization in organizations]
-
-    info(f"Creating cohort generation subtask for organizations {org_ids}")
+    info(f"Collecting cohort counts from organizations {org_ids}")
     task = client.task.create(
-        method="generate_cohort_count",
-        arguments={
-            "sql": cohort_sql,
-            "cohort_name": request.cohort_name,
-            "cohort_id": request.cohort_id,
-            "overwrite": request.overwrite,
-        },
+        method="cohort_count",
         organizations=org_ids,
-        name=f"Generate cohort {request.cohort_name}",
-        description=f"Generate OMOP cohort {request.cohort_id} and return patient count",
+        name="Cohort count",
+        description="Read back the cohort count recorded at each node",
     )
-
-    info("Waiting for federated cohort counts")
+    if not isinstance(task, dict) or "id" not in task:
+        # e.g. HQ refuses when the dataframe is missing at some organization
+        # because its generate_cohort run failed.
+        reason = task.get("msg", task) if isinstance(task, dict) else task
+        return {
+            "status": "error",
+            "message": f"HQ did not create the cohort_count subtasks: {reason}",
+        }
     results = client.wait_for_results(task_id=task["id"])
 
-    return aggregate_central_results(
-        cohort_id=request.cohort_id,
-        cohort_name=request.cohort_name,
-        input_type=request.input_type,
-        expected_org_ids=org_ids,
-        raw_results=results,
-    )
+    return aggregate_central_results(expected_org_ids=org_ids, raw_results=results)
 
 
 @central
 @algorithm_client
 def central_function(
     client: AlgorithmClient,
-    cohort_name: str,
-    sql: str | None = None,
-    atlas_json: str | dict[str, Any] | None = None,
-    cohort_id: int | None = None,
-    overwrite: bool = False,
+    organizations_to_include: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Pre-v5 entry point; on vantage6 5 the client must orchestrate instead.
+    """Add up the cohort counts generate_cohort recorded at each node.
 
-    The in-container AlgorithmClient can only create federated tasks, and a
-    federated task gets no database connection, so nothing this function
-    dispatches can reach OMOP. Call ``generate_cohort`` as a data-extraction
-    step and ``cohort_count`` as a federated step from the client instead.
+    Returns each node's row, the errors, and the total: ``total_count`` when
+    it is exact, and ``total_range`` (lowest and highest possible total) when
+    some node withheld a count below its minimum.
+
+    Parameters
+    ----------
+    organizations_to_include : list[int], optional
+        Organizations to ask. Defaults to every organization in the
+        collaboration.
     """
-    del client, sql, atlas_json, overwrite
-    return {
-        "status": "error",
-        "cohort_id": cohort_id,
-        "cohort_name": cohort_name,
-        "message": (
-            "central_function cannot generate cohorts on vantage6 5: the "
-            "subtasks it creates are federated and receive no database "
-            "access. Run generate_cohort (data extraction) and cohort_count "
-            "(federated) from the client."
-        ),
-    }
-
-
-def _unused_pre_v5_central(client, cohort_name, sql, atlas_json, cohort_id, overwrite):
-    """The original body, kept for reference while the v4 flow is retired."""
-    return _run_central_function(
-        client=client,
-        cohort_name=cohort_name,
-        sql=sql,
-        atlas_json=atlas_json,
-        cohort_id=cohort_id,
-        overwrite=overwrite,
-    )
+    return _run_central_function(client, organizations_to_include)

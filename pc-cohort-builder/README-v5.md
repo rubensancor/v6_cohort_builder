@@ -70,9 +70,14 @@ reference client lives in the PROTECT-CHILD app repository
 (`pc_cohort_langgraph`, `src/vantage6_cohort.py`), with a stand-alone driver at
 `deploy/omop/run-cohort-builder.py`.
 
-`central_function` and `generate_cohort_count` remain importable and return a
-clear error explaining the above, so an old task definition fails legibly.
-They are no longer listed in `algorithm_store.json`.
+`generate_cohort_count` remains importable and returns a clear error
+explaining the above, so an old task definition fails legibly. It is no longer
+listed in `algorithm_store.json`.
+
+**Now:** `central_function` is a v5 central step again, with a narrower job:
+run on the dataframe `generate_cohort` left, it creates `cohort_count`
+subtasks (which inherit that dataframe) and adds the counts up. It still
+cannot generate the cohort, for the reason above.
 
 `generate_cohort` reads the connection from the `connection_details` dict the
 `@data_extraction` decorator builds from those same variables: `uri`, `type`,

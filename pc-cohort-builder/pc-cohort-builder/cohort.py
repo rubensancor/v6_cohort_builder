@@ -457,15 +457,20 @@ def extract_subject_count(cohort_counts: Any, cohort_id: int) -> int:
 
 def aggregate_central_results(
     *,
-    cohort_id: int,
-    cohort_name: str,
-    input_type: str,
     expected_org_ids: Iterable[int],
     raw_results: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any]:
+    """Combine the rows ``cohort_count`` returned into one answer.
+
+    ``total_count`` is exact only when every expected node answered and none
+    withheld its count. When some did withhold, each of them holds between 1
+    and its minimum - 1 subjects, so ``total_range`` gives the lowest and
+    highest possible total instead; both are None if any node failed.
+    """
     nodes: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     seen_org_ids: set[int] = set()
+    cohort_ids: set[Any] = set()
 
     for result in raw_results:
         raw_organization_id = result.get("organization_id")
@@ -476,12 +481,16 @@ def aggregate_central_results(
             seen_org_ids.add(organization_id)
         status = result.get("status")
         if status == "success":
+            cohort_ids.add(result.get("cohort_id"))
+            count = result.get("count")
             node = {
                 "organization_id": organization_id,
                 "status": "success",
-                "count": int(result["count"]),
+                "count": int(count) if count is not None else None,
             }
-            for key in ("database", "cdm_schema", "results_schema"):
+            for key in (
+                "database", "cdm_schema", "results_schema", "below_minimum", "minimum_count",
+            ):
                 if key in result:
                     node[key] = result[key]
             nodes.append(node)
@@ -505,13 +514,24 @@ def aggregate_central_results(
             }
         )
 
+    total_range = None
+    if not errors:
+        low = high = 0
+        for node in nodes:
+            if node["count"] is not None:
+                low += node["count"]
+                high += node["count"]
+            else:
+                low += 1
+                high += int(node.get("minimum_count") or DEFAULT_MINIMUM_COUNT) - 1
+        total_range = [low, high]
+
     return {
-        "cohort_id": cohort_id,
-        "cohort_name": cohort_name,
-        "input_type": input_type,
+        "cohort_id": next(iter(cohort_ids)) if len(cohort_ids) == 1 else None,
         "nodes": nodes,
         "errors": errors,
-        "total_count": sum(node["count"] for node in nodes) if not errors else None,
+        "total_count": total_range[0] if total_range and total_range[0] == total_range[1] else None,
+        "total_range": total_range,
     }
 
 

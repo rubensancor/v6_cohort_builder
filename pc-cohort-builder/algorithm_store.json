@@ -1,6 +1,6 @@
 {
   "name": "pc-cohort-builder",
-  "description": "Generates a cohort from an ATLAS cohort definition (Circe JSON) or OHDSI SQL in each node's OMOP CDM database and returns the subject count per node. Run generate_cohort (data extraction) and then cohort_count (federated) in the same session.",
+  "description": "Generates a cohort from an ATLAS cohort definition (Circe JSON) or OHDSI SQL in each node's OMOP CDM database and returns the subject count per node. Run generate_cohort (data extraction), then central_function (or cohort_count) on the dataframe it leaves in the session. Counts below a node's minimum are withheld.",
   "image": "ghcr.io/rubensancor/v6_cohort_builder",
   "vantage6_version": "5.0",
   "code_url": "https://github.com/rubensancor/v6_cohort_builder",
@@ -68,10 +68,35 @@
       ]
     },
     {
+      "name": "central_function",
+      "display_name": "Total cohort count",
+      "standalone": true,
+      "description": "Add up the cohort counts generate_cohort recorded at each node, with a range when a node withheld a count below its minimum.",
+      "step_type": "central_compute",
+      "ui_visualizations": [],
+      "arguments": [
+        {
+          "name": "organizations_to_include",
+          "display_name": "Organizations to include",
+          "description": "Organizations to ask. Defaults to every organization in the collaboration.",
+          "type": "organization_list",
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
+        }
+      ],
+      "databases": [
+        {
+          "name": "cohort",
+          "description": "The dataframe generate_cohort left in the session; the node subtasks read it."
+        }
+      ]
+    },
+    {
       "name": "cohort_count",
       "display_name": "Cohort count",
       "standalone": true,
-      "description": "Return the cohort outcome generate_cohort recorded at this node: status, cohort id and subject count.",
+      "description": "Return the cohort outcome generate_cohort recorded at this node: status, cohort id and subject count, or below_minimum when the count is withheld.",
       "step_type": "federated_compute",
       "ui_visualizations": [],
       "arguments": [],

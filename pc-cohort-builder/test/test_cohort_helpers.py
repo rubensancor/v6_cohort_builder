@@ -205,9 +205,6 @@ def test_extract_subject_count_wraps_invalid_subject_count_values():
 
 def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1, 2],
         raw_results=[
             {
@@ -230,6 +227,7 @@ def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     )
 
     assert response["total_count"] == 22
+    assert response["total_range"] == [22, 22]
     assert response["errors"] == []
     assert response["nodes"] == [
         {
@@ -251,11 +249,24 @@ def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     ]
 
 
+def test_aggregate_results_reports_the_cohort_id_the_nodes_share():
+    rows = [
+        {"organization_id": 1, "status": "success", "cohort_id": 55, "count": 10},
+        {"organization_id": 2, "status": "success", "cohort_id": 55, "count": 12},
+    ]
+
+    assert cohort.aggregate_central_results(
+        expected_org_ids=[1, 2], raw_results=rows
+    )["cohort_id"] == 55
+
+    rows[1]["cohort_id"] = 56
+    assert cohort.aggregate_central_results(
+        expected_org_ids=[1, 2], raw_results=rows
+    )["cohort_id"] is None
+
+
 def test_aggregate_results_keeps_partial_success_and_null_total():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1, 2, 3],
         raw_results=[
             {"organization_id": 1, "status": "success", "count": 10},
@@ -273,9 +284,6 @@ def test_aggregate_results_keeps_partial_success_and_null_total():
 
 def test_aggregate_results_handles_error_without_organization_id():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1],
         raw_results=[
             {
