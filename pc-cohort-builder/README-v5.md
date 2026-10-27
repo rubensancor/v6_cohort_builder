@@ -35,6 +35,16 @@ when something links against them. Fix, in `Dockerfile`:
   `CohortDiagnostics` are listed in `pyproject.toml` but never used, and they
   roughly triple the build.
 
+**Now:** the image builds on vantage6's `algorithm-ohdsi-base:5.0` (maintained
+by Frank Martin, IKNL), pinned to the same digest as the other PROTECT-CHILD
+OMOP algorithms. It ships R, Java 17, the OHDSI R packages and their
+python-ohdsi wrappers, so the Dockerfile no longer builds any of that, and
+python-ohdsi's `database_connector` passes its own PostgreSQL jar as
+`pathToDriver`, so no JDBC download is needed either. One catch: the `rpy2`
+in that base fails to load against its R 4.2.2 (`undefined symbol:
+R_getVar`), so `pyproject.toml` pins `rpy2==3.6.6`, `rpy2-rinterface==3.6.5`
+and `rpy2-robjects==3.6.4`, as the other algorithms do.
+
 ### 2. A federated task never sees the database
 
 vantage6 5 injects `DATABASE_URI` and the `DB_PARAM_*` variables **only when a
@@ -60,8 +70,20 @@ reference client lives in the PROTECT-CHILD app repository
 (`pc_cohort_langgraph`, `src/vantage6_cohort.py`), with a stand-alone driver at
 `deploy/omop/run-cohort-builder.py`.
 
-`central_function` and `generate_cohort_count` remain importable and return a
-clear error explaining the above, so an old task definition fails legibly.
+`generate_cohort_count` remains importable and returns a clear error
+explaining the above, so an old task definition fails legibly. It is no longer
+listed in `algorithm_store.json`.
+
+**Now:** `central_function` is a v5 central step again, with a narrower job:
+run on the dataframe `generate_cohort` left, it creates `cohort_count`
+subtasks (which inherit that dataframe) and adds the counts up. It still
+cannot generate the cohort, for the reason above.
+
+`generate_cohort` reads the connection from the `connection_details` dict the
+`@data_extraction` decorator builds from those same variables: `uri`, `type`,
+and every `DB_PARAM_<NAME>` as `<NAME>` (`DBMS`, `USER`, `PASSWORD`,
+`CDM_DATABASE`, `CDM_SCHEMA`, `RESULTS_SCHEMA`), as the other PROTECT-CHILD
+OMOP algorithms do.
 
 ### 3. `ohdsi.common` needs FeatureExtraction just to be imported
 
@@ -79,6 +101,10 @@ and a large native build. `rconvert.py` does the two conversions with rpy2
 directly and `_load_ohdsi_modules` uses it instead; the Dockerfile now imports
 the OHDSI path during the build so a missing R package fails there and not at
 a node.
+
+**Now:** `algorithm-ohdsi-base` includes FeatureExtraction, so `rconvert.py`
+is gone and `_load_ohdsi_modules` uses `ohdsi.common` again. The build-time
+import check stays.
 
 ## Smaller things
 
@@ -109,6 +135,9 @@ node:
           cdm_schema: cdm
           results_schema: results
 ```
+
+`generate_cohort` receives the `env` keys upper-cased in `connection_details`
+(`user` → `USER`, and so on).
 
 Plus an egress network policy letting algorithm pods reach the database
 (`task-egress-omop.yaml` in the same app repository): vantage6 isolates them with deny-all by

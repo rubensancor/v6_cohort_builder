@@ -5,12 +5,12 @@ Entry points, in the order a client calls them on vantage6 5:
 1. ``generate_cohort`` — data-extraction step; runs at each node with database
    access, writes the cohort to ``results.cohort``, leaves a one-row dataframe
    with the count in the session.
-2. ``cohort_count`` — federated step; reads that row and returns it, which is
-   how the count reaches the client.
+2. ``central_function`` — central step on that dataframe; asks every node's
+   ``cohort_count`` for its row and adds the counts up. A client can also call
+   ``cohort_count`` (federated) directly and add them up itself.
 
-``central_function`` and ``generate_cohort_count`` are the pre-v5 entry points.
-They remain importable so old task definitions fail with a clear message rather
-than an obscure crash.
+``generate_cohort_count`` is the pre-v5 entry point. It remains importable so
+old task definitions fail with a clear message rather than an obscure crash.
 """
 
 from .central import central_function

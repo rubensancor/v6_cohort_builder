@@ -99,21 +99,25 @@ def test_normalize_atlas_json_reports_non_serializable_values():
         cohort.normalize_atlas_json({"ConceptSets": [object()]})
 
 
-def test_parse_omop_config_reads_vantage6_database_environment():
-    env = {
-        "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-        "DATABASE_TYPE": "OMOP",
-        "DB_PARAM_DBMS": "postgresql",
-        "DB_PARAM_USER": "user",
-        "DB_PARAM_PASSWORD": "secret",
-        "DB_PARAM_CDM_DATABASE": "omop",
-        "DB_PARAM_CDM_SCHEMA": "cdm",
-        "DB_PARAM_RESULTS_SCHEMA": "results",
-        "ORGANIZATION_ID": "3",
-        "NODE_ID": "9",
+def _connection_details() -> dict:
+    """What the @data_extraction decorator hands the function: DATABASE_URI and
+    DATABASE_TYPE as uri/type, and every DB_PARAM_<NAME> as <NAME>."""
+    return {
+        "uri": "jdbc:postgresql://db:5432/omop",
+        "type": "OMOP",
+        "DBMS": "postgresql",
+        "USER": "user",
+        "PASSWORD": "secret",
+        "CDM_DATABASE": "omop",
+        "CDM_SCHEMA": "cdm",
+        "RESULTS_SCHEMA": "results",
     }
 
-    config = cohort.parse_omop_config(env)
+
+def test_parse_omop_config_reads_the_connection_details():
+    config = cohort.parse_omop_config(
+        _connection_details(), {"ORGANIZATION_ID": "3", "NODE_ID": "9"}
+    )
 
     assert config.uri == "jdbc:postgresql://db:5432/omop"
     assert config.database_type == "OMOP"
@@ -128,35 +132,16 @@ def test_parse_omop_config_reads_vantage6_database_environment():
 
 
 def test_parse_omop_config_reports_missing_keys():
-    with pytest.raises(cohort.NodeConfigError, match="DB_PARAM_PASSWORD"):
-        cohort.parse_omop_config(
-            {
-                "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-                "DATABASE_TYPE": "OMOP",
-                "DB_PARAM_DBMS": "postgresql",
-                "DB_PARAM_USER": "user",
-                "DB_PARAM_CDM_DATABASE": "omop",
-                "DB_PARAM_CDM_SCHEMA": "cdm",
-                "DB_PARAM_RESULTS_SCHEMA": "results",
-            }
-        )
+    details = _connection_details()
+    del details["PASSWORD"]
+
+    with pytest.raises(cohort.NodeConfigError, match="configuration: PASSWORD$"):
+        cohort.parse_omop_config(details, {})
 
 
 def test_parse_omop_config_reports_invalid_optional_ids():
     with pytest.raises(cohort.NodeConfigError, match="ORGANIZATION_ID must be an integer"):
-        cohort.parse_omop_config(
-            {
-                "DATABASE_URI": "jdbc:postgresql://db:5432/omop",
-                "DATABASE_TYPE": "OMOP",
-                "DB_PARAM_DBMS": "postgresql",
-                "DB_PARAM_USER": "user",
-                "DB_PARAM_PASSWORD": "secret",
-                "DB_PARAM_CDM_DATABASE": "omop",
-                "DB_PARAM_CDM_SCHEMA": "cdm",
-                "DB_PARAM_RESULTS_SCHEMA": "results",
-                "ORGANIZATION_ID": "abc",
-            }
-        )
+        cohort.parse_omop_config(_connection_details(), {"ORGANIZATION_ID": "abc"})
 
 
 def test_extract_subject_count_from_cohort_counts_dataframe():
@@ -220,9 +205,6 @@ def test_extract_subject_count_wraps_invalid_subject_count_values():
 
 def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1, 2],
         raw_results=[
             {
@@ -245,6 +227,7 @@ def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     )
 
     assert response["total_count"] == 22
+    assert response["total_range"] == [22, 22]
     assert response["errors"] == []
     assert response["nodes"] == [
         {
@@ -266,11 +249,24 @@ def test_aggregate_results_returns_total_only_when_all_nodes_succeed():
     ]
 
 
+def test_aggregate_results_reports_the_cohort_id_the_nodes_share():
+    rows = [
+        {"organization_id": 1, "status": "success", "cohort_id": 55, "count": 10},
+        {"organization_id": 2, "status": "success", "cohort_id": 55, "count": 12},
+    ]
+
+    assert cohort.aggregate_central_results(
+        expected_org_ids=[1, 2], raw_results=rows
+    )["cohort_id"] == 55
+
+    rows[1]["cohort_id"] = 56
+    assert cohort.aggregate_central_results(
+        expected_org_ids=[1, 2], raw_results=rows
+    )["cohort_id"] is None
+
+
 def test_aggregate_results_keeps_partial_success_and_null_total():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1, 2, 3],
         raw_results=[
             {"organization_id": 1, "status": "success", "count": 10},
@@ -288,9 +284,6 @@ def test_aggregate_results_keeps_partial_success_and_null_total():
 
 def test_aggregate_results_handles_error_without_organization_id():
     response = cohort.aggregate_central_results(
-        cohort_id=55,
-        cohort_name="Death cohort",
-        input_type="sql",
         expected_org_ids=[1],
         raw_results=[
             {
@@ -465,3 +458,84 @@ def test_execute_cohort_generation_uses_ohdsi_wrappers_and_returns_count(monkeyp
     )
     assert calls[8] == ("convert_from_r", "r-counts")
     assert calls[9][0] == "disconnect"
+
+
+def test_load_ohdsi_modules_uses_python_ohdsi_common(monkeypatch):
+    # The algorithm-ohdsi-base image carries FeatureExtraction, which
+    # ohdsi.common loads on import, so the package's own converters are used.
+    import sys
+    import types
+
+    package = types.ModuleType("ohdsi")
+    package.__path__ = []
+    fakes = {}
+    for name in ("common", "cohort_generator", "database_connector"):
+        fakes[name] = types.ModuleType(f"ohdsi.{name}")
+        setattr(package, name, fakes[name])
+        monkeypatch.setitem(sys.modules, f"ohdsi.{name}", fakes[name])
+    monkeypatch.setitem(sys.modules, "ohdsi", package)
+
+    common, cohort_generator, database_connector = cohort._load_ohdsi_modules()
+
+    assert common is fakes["common"]
+    assert cohort_generator is fakes["cohort_generator"]
+    assert database_connector is fakes["database_connector"]
+
+
+def test_minimum_count_defaults_to_five():
+    assert cohort.minimum_count({}) == 5
+
+
+def test_minimum_count_reads_the_node_setting():
+    assert cohort.minimum_count({"COHORT_BUILDER_MINIMUM_COUNT": "10"}) == 10
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-3"])
+def test_minimum_count_rejects_invalid_node_settings(value):
+    with pytest.raises(cohort.NodeConfigError, match="COHORT_BUILDER_MINIMUM_COUNT"):
+        cohort.minimum_count({"COHORT_BUILDER_MINIMUM_COUNT": value})
+
+
+@pytest.mark.parametrize("count", [1, 4])
+def test_withhold_small_count_hides_counts_below_the_minimum(count):
+    row = cohort.withhold_small_count({"status": "success", "count": count}, minimum=5)
+
+    assert row["count"] is None
+    assert row["below_minimum"] is True
+    assert row["minimum_count"] == 5
+
+
+@pytest.mark.parametrize("count", [0, 5, 42])
+def test_withhold_small_count_shares_zero_and_counts_at_the_minimum(count):
+    row = cohort.withhold_small_count({"status": "success", "count": count}, minimum=5)
+
+    assert row["count"] == count
+    assert row["below_minimum"] is False
+
+
+def test_withhold_small_count_keeps_a_count_already_withheld():
+    row = cohort.withhold_small_count(
+        {"status": "success", "count": None, "below_minimum": True}, minimum=5
+    )
+
+    assert row["count"] is None
+    assert row["below_minimum"] is True
+
+
+def test_sql_is_not_allowed_by_default():
+    assert cohort.sql_allowed({}) is False
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1", "yes"])
+def test_sql_is_allowed_when_the_node_opts_in(value):
+    assert cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": value}) is True
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no"])
+def test_sql_stays_off_when_the_node_says_no(value):
+    assert cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": value}) is False
+
+
+def test_sql_allowed_rejects_an_unclear_node_setting():
+    with pytest.raises(cohort.NodeConfigError, match="COHORT_BUILDER_ALLOW_SQL"):
+        cohort.sql_allowed({"COHORT_BUILDER_ALLOW_SQL": "maybe"})

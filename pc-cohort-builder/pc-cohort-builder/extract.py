@@ -2,8 +2,9 @@
 
 Why this is a data-extraction step and not a federated one
 ----------------------------------------------------------
-vantage6 5 hands a task the node's database connection — DATABASE_URI and the
-DB_PARAM_* variables — only when the task's action is ``data_extraction``.
+vantage6 5 hands a task the node's database connection — the
+``connection_details`` the ``@data_extraction`` decorator passes in — only
+when the task's action is ``data_extraction``.
 Federated and central compute steps run without any database access, by
 design: they are meant to work on dataframes the extraction step produced.
 
@@ -32,8 +33,12 @@ from .cohort import (
     atlas_json_to_sql,
     cohort_result_row,
     execute_cohort_generation,
+    minimum_count,
+    node_identity,
     parse_omop_config,
+    sql_allowed,
     validate_cohort_request,
+    withhold_small_count,
 )
 
 DecoratedFunction = TypeVar("DecoratedFunction", bound=Callable[..., Any])
@@ -54,6 +59,7 @@ except ValueError as exc:  # rpy2 without R at import time, e.g. in unit tests
 
 
 def _run_generate_cohort(
+    connection_details: dict,
     cohort_name: str,
     sql: str | None = None,
     atlas_json: str | dict[str, Any] | None = None,
@@ -65,6 +71,9 @@ def _run_generate_cohort(
     Errors are reported inside the row rather than raised: an extraction step
     that raises produces no dataframe at all, and the client would then only
     learn that the run crashed, not why.
+
+    A count below the node's minimum is withheld here, before it reaches the
+    row or the log, so the exact number never leaves the node.
     """
     config: OmopConfig | None = None
     request = None
@@ -76,7 +85,13 @@ def _run_generate_cohort(
             cohort_id=cohort_id,
             overwrite=overwrite,
         )
-        config = parse_omop_config()
+        if request.input_type == "sql" and not sql_allowed():
+            raise CohortInputError(
+                "This node does not accept SQL cohort definitions: send atlas_json, "
+                "or ask the node administrator to set COHORT_BUILDER_ALLOW_SQL: true"
+            )
+        config = parse_omop_config(connection_details)
+        minimum = minimum_count()
 
         cohort_sql = request.sql
         if request.atlas_json is not None:
@@ -91,17 +106,24 @@ def _run_generate_cohort(
             cohort_id=request.cohort_id,
             overwrite=request.overwrite,
         )
-        info(f"Cohort {request.cohort_id} holds {outcome['count']} subjects")
-        return cohort_result_row(
-            config=config,
-            cohort_id=request.cohort_id,
-            cohort_name=request.cohort_name,
-            input_type=request.input_type,
-            status="success",
-            **outcome,
+        row = withhold_small_count(
+            cohort_result_row(
+                config=config,
+                cohort_id=request.cohort_id,
+                cohort_name=request.cohort_name,
+                input_type=request.input_type,
+                status="success",
+                **outcome,
+            ),
+            minimum,
         )
+        if row["below_minimum"]:
+            info(f"Cohort {request.cohort_id} has fewer than {minimum} subjects; count withheld")
+        else:
+            info(f"Cohort {request.cohort_id} holds {row['count']} subjects")
+        return row
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        return cohort_result_row(
+        row = cohort_result_row(
             config=config,
             cohort_id=request.cohort_id if request else cohort_id,
             cohort_name=cohort_name,
@@ -109,6 +131,11 @@ def _run_generate_cohort(
             status="error",
             message=str(exc),
         )
+        if config is None:
+            # Failed before the connection was read: the ids still matter,
+            # since central_function matches rows to organizations by them.
+            row.update(node_identity())
+        return row
 
 
 @data_extraction
@@ -122,12 +149,13 @@ def generate_cohort(
 ) -> pd.DataFrame:
     """Generate a cohort in this node's OMOP database and return its count.
 
-    ``connection_details`` is supplied by the node; the OMOP parameters are also
-    available as DB_PARAM_* variables, which is what ``parse_omop_config`` reads.
+    ``connection_details`` is supplied by the node: ``uri``, ``type`` and the
+    database's ``env`` settings (``DBMS``, ``USER``, ``PASSWORD``,
+    ``CDM_DATABASE``, ``CDM_SCHEMA``, ``RESULTS_SCHEMA``).
     Provide exactly one of ``sql`` or ``atlas_json``.
     """
-    del connection_details  # parse_omop_config reads the same values from the env
     row = _run_generate_cohort(
+        connection_details,
         cohort_name=cohort_name,
         sql=sql,
         atlas_json=atlas_json,

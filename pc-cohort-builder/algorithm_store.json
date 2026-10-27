@@ -1,5 +1,6 @@
 {
   "name": "pc-cohort-builder",
+  "description": "Generates a cohort from an ATLAS cohort definition (Circe JSON) or OHDSI SQL in each node's OMOP CDM database and returns the subject count per node. Run generate_cohort (data extraction), then central_function (or cohort_count) on the dataframe it leaves in the session. Counts below a node's minimum are withheld.",
   "image": "ghcr.io/rubensancor/v6_cohort_builder",
   "vantage6_version": "5.0",
   "code_url": "https://github.com/rubensancor/v6_cohort_builder",
@@ -7,68 +8,102 @@
   "partitioning": "horizontal",
   "functions": [
     {
-      "name": "central_function",
-      "description": "Generate an OMOP cohort at all organizations from SQL or ATLAS JSON and aggregate exact patient counts.",
-      "step_type": "central_compute",
-      "databases": [],
+      "name": "generate_cohort",
+      "display_name": "Generate cohort",
+      "standalone": true,
+      "description": "Generate a cohort in this node's OMOP database and leave its subject count in the session.",
+      "step_type": "data_extraction",
+      "ui_visualizations": [],
       "arguments": [
         {
           "name": "cohort_name",
+          "display_name": "Cohort name",
+          "description": "Human-readable cohort name.",
           "type": "string",
-          "description": "Human-readable cohort name."
+          "has_default_value": false,
+          "is_frontend_only": false
         },
         {
           "name": "sql",
+          "display_name": "SQL",
+          "description": "OHDSI CohortGenerator SQL. Provide exactly one of sql or atlas_json. Only nodes that set COHORT_BUILDER_ALLOW_SQL: true accept it.",
           "type": "string",
-          "description": "OHDSI CohortGenerator SQL. Provide exactly one of sql or atlas_json."
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
         },
         {
           "name": "atlas_json",
-          "type": "string",
-          "description": "ATLAS cohort expression JSON. Provide exactly one of sql or atlas_json."
+          "display_name": "ATLAS JSON",
+          "description": "ATLAS cohort expression (Circe JSON). Provide exactly one of sql or atlas_json.",
+          "type": "json",
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
         },
         {
           "name": "cohort_id",
+          "display_name": "Cohort id",
+          "description": "Positive cohort identifier. Generated from the current time if omitted; use the same id at every node.",
           "type": "integer",
-          "description": "Positive cohort identifier. If omitted, the central function generates one."
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
         },
         {
           "name": "overwrite",
+          "display_name": "Overwrite",
+          "description": "Replace an existing cohort with the same id instead of failing.",
           "type": "boolean",
-          "description": "Whether federated nodes may replace an existing cohort with the same id."
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": false
+        }
+      ],
+      "databases": [
+        {
+          "name": "omop",
+          "description": "The node's OMOP CDM database. Its env settings must give DBMS, USER, PASSWORD, CDM_DATABASE, CDM_SCHEMA and RESULTS_SCHEMA."
         }
       ]
     },
     {
-      "name": "generate_cohort_count",
-      "description": "Generate a cohort on an OMOP node and return the exact subject count.",
-      "step_type": "federated_compute",
-      "databases": [
-        {
-          "name": "omop",
-          "description": "OMOP CDM database configured with DATABASE_TYPE=OMOP and DB_PARAM_* connection values."
-        }
-      ],
+      "name": "central_function",
+      "display_name": "Total cohort count",
+      "standalone": true,
+      "description": "Add up the cohort counts generate_cohort recorded at each node, with a range when a node withheld a count below its minimum.",
+      "step_type": "central_compute",
+      "ui_visualizations": [],
       "arguments": [
         {
-          "name": "sql",
-          "type": "string",
-          "description": "OHDSI CohortGenerator SQL to execute."
-        },
+          "name": "organizations_to_include",
+          "display_name": "Organizations to include",
+          "description": "Organizations to ask. Defaults to every organization in the collaboration.",
+          "type": "organization_list",
+          "has_default_value": true,
+          "is_frontend_only": false,
+          "default_value": null
+        }
+      ],
+      "databases": [
         {
-          "name": "cohort_name",
-          "type": "string",
-          "description": "Human-readable cohort name."
-        },
+          "name": "cohort",
+          "description": "The dataframe generate_cohort left in the session; the node subtasks read it."
+        }
+      ]
+    },
+    {
+      "name": "cohort_count",
+      "display_name": "Cohort count",
+      "standalone": true,
+      "description": "Return the cohort outcome generate_cohort recorded at this node: status, cohort id and subject count, or below_minimum when the count is withheld.",
+      "step_type": "federated_compute",
+      "ui_visualizations": [],
+      "arguments": [],
+      "databases": [
         {
-          "name": "cohort_id",
-          "type": "integer",
-          "description": "Positive cohort identifier to generate at this node."
-        },
-        {
-          "name": "overwrite",
-          "type": "boolean",
-          "description": "Whether to replace an existing cohort with the same id."
+          "name": "cohort",
+          "description": "The one-row dataframe generate_cohort left in the session."
         }
       ]
     }

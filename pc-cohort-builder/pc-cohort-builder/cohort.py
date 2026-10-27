@@ -20,6 +20,41 @@ class NodeConfigError(RuntimeError):
     """Raised when a node is missing required OMOP configuration."""
 
 
+# Counts from 1 up to this minimum never leave a node: a cohort of two
+# children at one hospital can identify them. Node administrators set their
+# own minimum with ``algorithm_env: {COHORT_BUILDER_MINIMUM_COUNT: <n>}`` in
+# the node configuration, as with the other PROTECT-CHILD algorithms.
+MINIMUM_COUNT_ENV = "COHORT_BUILDER_MINIMUM_COUNT"
+DEFAULT_MINIMUM_COUNT = 5
+
+# The sql input runs the requester's own SQL with the node's credentials, so
+# a query can make the count encode any value it reads (one patient's year of
+# birth, say), whatever the minimum. Nodes accept it only when their
+# administrator opts in with ``algorithm_env: {COHORT_BUILDER_ALLOW_SQL: true}``;
+# ATLAS JSON, from which CirceR writes the SQL, is always accepted.
+ALLOW_SQL_ENV = "COHORT_BUILDER_ALLOW_SQL"
+_TRUE_VALUES = {"true", "1", "yes"}
+_FALSE_VALUES = {"false", "0", "no"}
+
+# Everything a node's cohort outcome may contain. The federated step returns
+# only these fields, whatever else the dataframe it is given holds.
+RESULT_FIELDS = (
+    "organization_id",
+    "node_id",
+    "status",
+    "cohort_id",
+    "cohort_name",
+    "input_type",
+    "database",
+    "cdm_schema",
+    "results_schema",
+    "count",
+    "message",
+    "below_minimum",
+    "minimum_count",
+)
+
+
 @dataclass(frozen=True)
 class CohortRequest:
     cohort_name: str
@@ -136,9 +171,7 @@ def atlas_json_to_sql(atlas_json: str) -> str:
 
 
 def _load_ohdsi_modules() -> tuple[Any, Any, Any]:
-    # ``ohdsi.common`` is deliberately not used: importing it loads the R
-    # package FeatureExtraction, which the image does not carry (see rconvert).
-    from . import rconvert as common  # pylint: disable=import-outside-toplevel
+    from ohdsi import common  # pylint: disable=import-outside-toplevel
     from ohdsi import cohort_generator  # pylint: disable=import-outside-toplevel
     from ohdsi import database_connector  # pylint: disable=import-outside-toplevel
 
@@ -231,31 +264,42 @@ def execute_cohort_generation(
             database_connector.disconnect(connection)
 
 
-def parse_omop_config(environ: Mapping[str, str] | None = None) -> OmopConfig:
+def parse_omop_config(
+    connection_details: Mapping[str, str],
+    environ: Mapping[str, str] | None = None,
+) -> OmopConfig:
+    """Read the OMOP connection from the ``connection_details`` the
+    ``@data_extraction`` decorator passes in.
+
+    The decorator fills that dict from the node's database configuration:
+    ``uri`` and ``type``, plus every ``DB_PARAM_<NAME>`` as ``<NAME>`` (the
+    ``env`` block of the node's database entry). The organization and node
+    ids are not database settings, so they still come from the environment.
+    """
     environ = os.environ if environ is None else environ
     required_keys = [
-        "DATABASE_URI",
-        "DATABASE_TYPE",
-        "DB_PARAM_DBMS",
-        "DB_PARAM_USER",
-        "DB_PARAM_PASSWORD",
-        "DB_PARAM_CDM_DATABASE",
-        "DB_PARAM_CDM_SCHEMA",
-        "DB_PARAM_RESULTS_SCHEMA",
+        "uri",
+        "type",
+        "DBMS",
+        "USER",
+        "PASSWORD",
+        "CDM_DATABASE",
+        "CDM_SCHEMA",
+        "RESULTS_SCHEMA",
     ]
-    missing = [key for key in required_keys if not environ.get(key)]
+    missing = [key for key in required_keys if not connection_details.get(key)]
     if missing:
         raise NodeConfigError(f"Missing required OMOP configuration: {', '.join(missing)}")
 
     return OmopConfig(
-        uri=environ["DATABASE_URI"],
-        database_type=environ["DATABASE_TYPE"],
-        dbms=environ["DB_PARAM_DBMS"],
-        user=environ["DB_PARAM_USER"],
-        password=environ["DB_PARAM_PASSWORD"],
-        cdm_database=environ["DB_PARAM_CDM_DATABASE"],
-        cdm_schema=environ["DB_PARAM_CDM_SCHEMA"],
-        results_schema=environ["DB_PARAM_RESULTS_SCHEMA"],
+        uri=connection_details["uri"],
+        database_type=connection_details["type"],
+        dbms=connection_details["DBMS"],
+        user=connection_details["USER"],
+        password=connection_details["PASSWORD"],
+        cdm_database=connection_details["CDM_DATABASE"],
+        cdm_schema=connection_details["CDM_SCHEMA"],
+        results_schema=connection_details["RESULTS_SCHEMA"],
         organization_id=_optional_int(environ, "ORGANIZATION_ID"),
         node_id=_optional_int(environ, "NODE_ID"),
     )
@@ -291,6 +335,74 @@ def cohort_result_row(
         ),
         "count": count,
         "message": message,
+    }
+
+
+def node_identity(environ: Mapping[str, str] | None = None) -> dict[str, int | None]:
+    """This node's organization and node ids, for a row written before the
+    OMOP connection was read.
+
+    Unreadable ids come back as None instead of raising, since this runs
+    while another error is being reported.
+    """
+    environ = os.environ if environ is None else environ
+    identity: dict[str, int | None] = {}
+    for field, key in (("organization_id", "ORGANIZATION_ID"), ("node_id", "NODE_ID")):
+        try:
+            identity[field] = _optional_int(environ, key)
+        except NodeConfigError:
+            identity[field] = None
+    return identity
+
+
+def minimum_count(environ: Mapping[str, str] | None = None) -> int:
+    """The node's minimum shareable count (``COHORT_BUILDER_MINIMUM_COUNT``).
+
+    An invalid setting raises instead of falling back to the default, so a
+    node whose administrator mistyped it shares nothing rather than counts
+    under a threshold they did not choose.
+    """
+    environ = os.environ if environ is None else environ
+    raw = environ.get(MINIMUM_COUNT_ENV)
+    if raw in (None, ""):
+        return DEFAULT_MINIMUM_COUNT
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise NodeConfigError(f"{MINIMUM_COUNT_ENV} must be a positive integer") from exc
+    if value < 1:
+        raise NodeConfigError(f"{MINIMUM_COUNT_ENV} must be a positive integer")
+    return value
+
+
+def sql_allowed(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether this node accepts the ``sql`` input (``COHORT_BUILDER_ALLOW_SQL``).
+
+    Off unless set to true; a value that is neither true nor false raises, so
+    a mistyped setting does not decide for the administrator.
+    """
+    environ = os.environ if environ is None else environ
+    raw = str(environ.get(ALLOW_SQL_ENV, "")).strip().lower()
+    if raw == "" or raw in _FALSE_VALUES:
+        return False
+    if raw in _TRUE_VALUES:
+        return True
+    raise NodeConfigError(f"{ALLOW_SQL_ENV} must be true or false")
+
+
+def withhold_small_count(row: Mapping[str, Any], minimum: int) -> dict[str, Any]:
+    """Blank out a count from 1 to ``minimum - 1``; zero and larger counts stay.
+
+    The row records that it was withheld and the minimum used, so a client
+    can show "fewer than 5" instead of a missing value.
+    """
+    count = row.get("count")
+    below = bool(row.get("below_minimum")) or (count is not None and 0 < count < minimum)
+    return {
+        **row,
+        "count": None if below else count,
+        "below_minimum": below,
+        "minimum_count": minimum,
     }
 
 
@@ -386,15 +498,20 @@ def extract_subject_count(cohort_counts: Any, cohort_id: int) -> int:
 
 def aggregate_central_results(
     *,
-    cohort_id: int,
-    cohort_name: str,
-    input_type: str,
     expected_org_ids: Iterable[int],
     raw_results: Iterable[Mapping[str, Any]],
 ) -> dict[str, Any]:
+    """Combine the rows ``cohort_count`` returned into one answer.
+
+    ``total_count`` is exact only when every expected node answered and none
+    withheld its count. When some did withhold, each of them holds between 1
+    and its minimum - 1 subjects, so ``total_range`` gives the lowest and
+    highest possible total instead; both are None if any node failed.
+    """
     nodes: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     seen_org_ids: set[int] = set()
+    cohort_ids: set[Any] = set()
 
     for result in raw_results:
         raw_organization_id = result.get("organization_id")
@@ -405,12 +522,16 @@ def aggregate_central_results(
             seen_org_ids.add(organization_id)
         status = result.get("status")
         if status == "success":
+            cohort_ids.add(result.get("cohort_id"))
+            count = result.get("count")
             node = {
                 "organization_id": organization_id,
                 "status": "success",
-                "count": int(result["count"]),
+                "count": int(count) if count is not None else None,
             }
-            for key in ("database", "cdm_schema", "results_schema"):
+            for key in (
+                "database", "cdm_schema", "results_schema", "below_minimum", "minimum_count",
+            ):
                 if key in result:
                     node[key] = result[key]
             nodes.append(node)
@@ -434,13 +555,24 @@ def aggregate_central_results(
             }
         )
 
+    total_range = None
+    if not errors:
+        low = high = 0
+        for node in nodes:
+            if node["count"] is not None:
+                low += node["count"]
+                high += node["count"]
+            else:
+                low += 1
+                high += int(node.get("minimum_count") or DEFAULT_MINIMUM_COUNT) - 1
+        total_range = [low, high]
+
     return {
-        "cohort_id": cohort_id,
-        "cohort_name": cohort_name,
-        "input_type": input_type,
+        "cohort_id": next(iter(cohort_ids)) if len(cohort_ids) == 1 else None,
         "nodes": nodes,
         "errors": errors,
-        "total_count": sum(node["count"] for node in nodes) if not errors else None,
+        "total_count": total_range[0] if total_range and total_range[0] == total_range[1] else None,
+        "total_range": total_range,
     }
 
 

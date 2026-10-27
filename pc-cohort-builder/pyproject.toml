@@ -11,6 +11,11 @@ requires-python = ">=3.13"
 dependencies = [
   "vantage6-algorithm-tools>=5.0.0a43",
   "pandas",
+  # The rpy2 that loads against the R 4.2 of the algorithm-ohdsi-base image
+  # (see Dockerfile); the same pins as the other PROTECT-CHILD OMOP algorithms.
+  "rpy2==3.6.6",
+  "rpy2-rinterface==3.6.5",
+  "rpy2-robjects==3.6.4",
   "ohdsi-common>=0.4.1,<0.5.0",
   "ohdsi-sqlrender>=0.4.1,<0.5.0",
   "ohdsi-circe>=0.4.1,<0.5.0",
