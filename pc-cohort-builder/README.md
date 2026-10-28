@@ -63,9 +63,9 @@ either `central_function` for the total or `cohort_count` for each node's
 row.
 
 1. `generate_cohort`, a data-extraction step on each node's `omop` database,
-   with `cohort_name` and exactly one of `sql` (OHDSI CohortGenerator SQL) or
-   `atlas_json` (an ATLAS cohort expression), plus optional `cohort_id` and
-   `overwrite`. It writes the cohort to the node's results `cohort` table and
+   with `cohort_name`, `cohort_id` and exactly one of `sql` (OHDSI
+   CohortGenerator SQL) or `atlas_json` (an ATLAS cohort expression), plus
+   optional `overwrite`. It writes the cohort to the node's results `cohort` table and
    leaves a one-row dataframe with the outcome in the session.
 2. `cohort_count`, a federated step on that dataframe. It returns each node's
    row: `status`, `cohort_id`, `count`, `below_minimum`, `minimum_count` and,
@@ -96,13 +96,17 @@ algorithm_env:
 
 `central_function`, a central step run on the same dataframe, asks each
 node's `cohort_count` (optionally only `organizations_to_include`) and returns
-every node's row, the errors and the total: `total_count` when it is exact,
-and `total_range`, the lowest and highest possible total, when some node
-withheld its count.
+every node's row (with its `organization_id` and `cohort_id`), the errors and
+the total: `total_count` when it is exact, and `total_range`, the lowest and
+highest possible total, when some node withheld its count.
 
-Pass the same `cohort_id` to every node: when it is omitted, each node makes
-one up from the current time. If a node already holds rows for that cohort id,
-generation fails unless `overwrite` is true.
+Pass the same `cohort_id` to every node: it names the cohort, and each node
+stores its own patients under it in its results `cohort` table, where later
+steps read them. The algorithm store marks it as required. A client that calls
+the function without it still works, but each node then makes one up from its
+own clock, so the ids can differ between nodes; `central_function` shows the
+id each node used. If a node already holds rows for that cohort id, generation
+fails unless `overwrite` is true.
 
 A reference client that runs both steps and adds up the counts is
 `src/vantage6_cohort.py` in the PROTECT-CHILD app repository
