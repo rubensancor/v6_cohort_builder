@@ -52,7 +52,7 @@ Running the OHDSI code outside the image needs R, Java and those R packages.
 The unit tests stub the OHDSI calls and need none of them:
 
 ```bash
-python -m pytest test/test_cohort_helpers.py test/test_federated.py test/test_central.py
+python -m pytest test/test_cohort_helpers.py test/test_federated.py test/test_central.py test/test_logs.py
 ```
 
 ### Usage
@@ -120,6 +120,28 @@ algorithm container as `DATABASE_URI`, `DATABASE_TYPE` and `DB_PARAM_*`, and
 the `@data_extraction` decorator passes them to `generate_cohort` as
 `connection_details`: `uri`, `type`, `DBMS`, `USER`, `PASSWORD`,
 `CDM_DATABASE`, `CDM_SCHEMA` and `RESULTS_SCHEMA`.
+
+### Logs and messages
+
+As in the other PROTECT-CHILD algorithms, a run reports to two audiences.
+
+- **The algorithm log is for the technical team.** It uses vantage6's `info`,
+  `warn` and `error`. Each node logs who it is, what it was asked and how long
+  each step took. When a step fails, the node logs the step, the exact error
+  and its traceback. `central_function` logs one line per organization that
+  failed, with that node's error.
+- **The `status` table is for the user.** `central_function` always returns a
+  one-row table with `outcome` (`completed`, `partial` or `failed`) and
+  `message`, one sentence with no technical terms. The store declares it as
+  the `Summary` table for the web interface. For example: "At the 2 hospitals
+  that answered, 38 patients meet the cohort criteria. 1 hospital could not
+  take part: its data connection is not set up correctly. The technical team
+  can see the details in the log."
+
+Each error row carries an `error_kind` (`invalid_request`,
+`node_configuration`, `cohort_exists`, `missing_cohort` or `technical`), and
+`central_function` turns it into the sentence the user reads. Neither output
+ever contains the database password or a withheld count.
 
 ### Local OMOP smoke test
 
